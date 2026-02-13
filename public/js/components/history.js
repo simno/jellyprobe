@@ -16,7 +16,7 @@ const HistoryPage = {
         container.innerHTML = `
           <div class="empty-state">
             <i data-lucide="history"></i>
-            <p>No test runs yet.<br><a href="#/" style="color:var(--accent-400)">Create your first test run →</a></p>
+            <p>No test runs yet.<br><a href="#/" class="text-accent">Create your first test run →</a></p>
           </div>`;
         if (typeof lucide !== 'undefined') lucide.createIcons();
         return;
@@ -73,8 +73,9 @@ const HistoryPage = {
         </div>
 
         <div class="flex align-center gap-12 mb-12">
-          <label class="flex align-center gap-4 text-sm text-2 cursor-pointer ml-auto" style="user-select:none">
-            <input type="checkbox" id="showPassedCheckHist" /> Show passed
+          <label class="toggle-check ml-auto">
+            <input type="checkbox" id="showPassedCheckHist" />
+            <span>Show passed</span>
           </label>
         </div>
 

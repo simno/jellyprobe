@@ -31,6 +31,10 @@ handle various codecs and bitrates without manual testing.
 -   **Frontend:** Vanilla JS (SPA architecture), Lucide Icons, Hls.js.
 -   **Database:** SQLite with WAL mode for high-concurrency logging.
 
+## Screenshot
+
+![Test Run](./docs/screenshot.png)
+
 ## Installation
 
 ### Using Docker (Recommended)

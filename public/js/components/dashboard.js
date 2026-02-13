@@ -36,8 +36,9 @@ const DashboardPage = {
 
         <div class="flex align-center gap-12 mb-12">
           <div class="section-title" style="margin-bottom:0"><i data-lucide="table-2"></i> Results</div>
-          <label class="flex align-center gap-4 text-sm text-2 cursor-pointer ml-auto" style="user-select:none">
-            <input type="checkbox" id="showPassedCheck" /> Show passed
+          <label class="toggle-check ml-auto">
+            <input type="checkbox" id="showPassedCheck" />
+            <span>Show passed</span>
           </label>
         </div>
         <div id="resultsWrap"></div>
@@ -59,7 +60,7 @@ const DashboardPage = {
       document.getElementById('app').innerHTML = `
         <div class="empty-state" style="margin-top:80px">
           <i data-lucide="inbox"></i>
-          <p>No active test run.<br><a href="#/" style="color:var(--accent-400)">Create one →</a></p>
+          <p>No active test run.<br><a href="#/" class="text-accent">Create one →</a></p>
         </div>`;
       if (typeof lucide !== 'undefined') lucide.createIcons();
       return;
@@ -412,7 +413,28 @@ const DashboardPage = {
         completedSection.innerHTML = '<div class="empty-state"><p>No results recorded.</p></div>';
         return;
       }
-      completedSection.innerHTML = DashboardPage._buildResultsMatrix(results);
+
+      const showPassed = Store.get('showPassed') || false;
+      let html = `
+        <div class="flex align-center gap-12 mb-12">
+          <div class="section-title" style="margin-bottom:0"><i data-lucide="table-2"></i> Results</div>
+          <label class="toggle-check ml-auto">
+            <input type="checkbox" id="showPassedCheckCompleted" ${showPassed ? 'checked' : ''} />
+            <span>Show passed</span>
+          </label>
+        </div>
+      `;
+      html += DashboardPage._buildResultsMatrix(results);
+      completedSection.innerHTML = html;
+
+      const checkCompleted = document.getElementById('showPassedCheckCompleted');
+      if (checkCompleted) {
+        checkCompleted.addEventListener('change', (e) => {
+          Store.set('showPassed', e.target.checked);
+          this._showCompletedView(run);
+        });
+      }
+
       if (typeof lucide !== 'undefined') lucide.createIcons();
     } catch (_e) {
       completedSection.innerHTML = '<p class="text-2">Failed to load results.</p>';
@@ -438,13 +460,11 @@ const DashboardPage = {
     const showPassed = Store.get('showPassed') || false;
 
     // Summary counts
-    const allPassed = results.every(r => r.success);
     const failedItems = [...mediaMap.values()].filter(m =>
       Object.values(m.results).some(r => !r.success)
     ).length;
 
-    let html = `
-      <div class="section-title mb-16"><i data-lucide="${allPassed ? 'check-circle' : 'alert-triangle'}"></i> Results</div>`;
+    let html = '';
 
     if (failedItems > 0) {
       html += `<div class="results-summary results-summary-warn mb-16">

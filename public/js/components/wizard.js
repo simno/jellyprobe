@@ -83,7 +83,7 @@ const WizardPage = {
       body.innerHTML = `
         <div class="empty-state">
           <i data-lucide="monitor-speaker"></i>
-          <p>No device profiles configured yet.<br>Add one in <a href="#/settings" style="color:var(--accent-400)">Settings</a>.</p>
+          <p>No device profiles configured yet.<br>Add one in <a href="#/settings" class="text-accent">Settings</a>.</p>
         </div>
         <div class="wizard-actions"><div></div></div>`;
       return;
@@ -142,11 +142,13 @@ const WizardPage = {
         ${libs.map(l => {
     const id = l.ItemId || l.Id;
     const sel = selLibs.some(s => (s.ItemId || s.Id) === id);
-    return `<label class="lib-check${sel ? ' selected' : ''}" data-lid="${id}">
-            <input type="checkbox" ${sel ? 'checked' : ''} />
-            ${Utils.escapeHtml(l.Name)}
-            <span class="text-sm text-2" style="margin-left:auto">${l.CollectionType || 'Mixed'}</span>
-          </label>`;
+    return `<div class="select-card select-card-compact${sel ? ' selected' : ''}" data-lid="${id}">
+              <div class="select-card-check">${sel ? '<i data-lucide="check"></i>' : ''}</div>
+              <div class="select-card-title">${Utils.escapeHtml(l.Name)}</div>
+              <div class="select-card-meta">
+                <span class="text-sm text-2">${l.CollectionType || 'Mixed'}</span>
+              </div>
+            </div>`;
   }).join('')}
       </div>
 
@@ -182,26 +184,26 @@ const WizardPage = {
       </div>`;
 
     // Library toggles
-    body.querySelectorAll('.lib-check').forEach(el => {
-      el.addEventListener('click', (e) => {
-        e.preventDefault();
-        const cb = el.querySelector('input');
-        if (e.target !== cb) {
-          cb.checked = !cb.checked;
-        }
+    body.querySelectorAll('.select-card[data-lid]').forEach(el => {
+      el.addEventListener('click', () => {
         const id = el.dataset.lid;
+        const isSelected = el.classList.contains('selected');
         let sel = Store.get('selectedLibraries');
-        if (cb.checked) {
+
+        if (isSelected) {
+          sel = sel.filter(s => (s.ItemId || s.Id) !== id);
+        } else {
           if (!sel.some(s => (s.ItemId || s.Id) === id)) {
             sel.push(libs.find(l => (l.ItemId || l.Id) === id));
           }
-        } else {
-          sel = sel.filter(s => (s.ItemId || s.Id) !== id);
         }
+
         Store.set('selectedLibraries', sel);
         Store.set('allMediaItems', []);
         Store.set('selectedMedia', []);
-        el.classList.toggle('selected', cb.checked);
+        el.classList.toggle('selected');
+        el.querySelector('.select-card-check').innerHTML = el.classList.contains('selected') ? '<i data-lucide="check"></i>' : '';
+        if (typeof lucide !== 'undefined') lucide.createIcons();
         this._loadMediaScope();
       });
     });

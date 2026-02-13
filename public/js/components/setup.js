@@ -47,20 +47,20 @@ const SetupPage = {
     const url = document.getElementById('setupUrl').value.trim();
     const key = document.getElementById('setupKey').value.trim();
     const result = document.getElementById('connResult');
-    if (!url || !key) { result.innerHTML = '<span style="color:var(--red-400)">Enter URL and API key</span>'; return; }
+    if (!url || !key) { result.innerHTML = '<span class="text-error">Enter URL and API key</span>'; return; }
 
     result.innerHTML = '<div class="spinner"></div>';
     try {
       const r = await Api.testConnection({ jellyfinUrl: url, apiKey: key });
       if (r.success) {
-        result.innerHTML = `<span style="color:var(--green-400)">Connected to ${Utils.escapeHtml(r.serverName)} (v${Utils.escapeHtml(r.version)})</span>`;
+        result.innerHTML = `<span class="text-success">Connected to ${Utils.escapeHtml(r.serverName)} (v${Utils.escapeHtml(r.version)})</span>`;
         document.getElementById('setupSaveBtn').disabled = false;
         await this._loadLibs();
       } else {
-        result.innerHTML = `<span style="color:var(--red-400)">${Utils.escapeHtml(r.error || 'Connection failed')}</span>`;
+        result.innerHTML = `<span class="text-error">${Utils.escapeHtml(r.error || 'Connection failed')}</span>`;
       }
     } catch (e) {
-      result.innerHTML = `<span style="color:var(--red-400)">${Utils.escapeHtml(e.message)}</span>`;
+      result.innerHTML = `<span class="text-error">${Utils.escapeHtml(e.message)}</span>`;
     }
   },
 
@@ -78,20 +78,20 @@ const SetupPage = {
         <label class="form-label">Libraries to Monitor</label>
         ${this._libraries.map(lib => {
     const id = lib.ItemId || lib.Id;
-    return `<label class="lib-check selected">
-            <input type="checkbox" value="${id}" checked /> ${Utils.escapeHtml(lib.Name)}
-            <span class="text-sm text-2">${lib.CollectionType || 'Mixed'}</span>
-          </label>`;
+    return `<div class="select-card select-card-compact selected" data-lib-id="${id}">
+              <div class="select-card-check"><i data-lucide="check"></i></div>
+              <div class="select-card-title">${Utils.escapeHtml(lib.Name)}</div>
+              <div class="select-card-meta">
+                <span class="text-sm text-2">${lib.CollectionType || 'Mixed'}</span>
+              </div>
+            </div>`;
   }).join('')}`;
       container.classList.remove('hidden');
-      container.querySelectorAll('.lib-check').forEach(el => {
-        el.addEventListener('click', (e) => {
-          e.preventDefault();
-          const cb = el.querySelector('input');
-          if (e.target !== cb) {
-            cb.checked = !cb.checked;
-          }
-          el.classList.toggle('selected', cb.checked);
+      container.querySelectorAll('.select-card[data-lib-id]').forEach(el => {
+        el.addEventListener('click', () => {
+          el.classList.toggle('selected');
+          el.querySelector('.select-card-check').innerHTML = el.classList.contains('selected') ? '<i data-lucide="check"></i>' : '';
+          if (typeof lucide !== 'undefined') lucide.createIcons();
         });
       });
     } catch (_e) { /* ignore */ }
@@ -100,7 +100,7 @@ const SetupPage = {
   async _save() {
     const url = document.getElementById('setupUrl').value.trim();
     const key = document.getElementById('setupKey').value.trim();
-    const libIds = Array.from(document.querySelectorAll('#setupLibs input:checked')).map(cb => cb.value);
+    const libIds = Array.from(document.querySelectorAll('#setupLibs .select-card.selected')).map(el => el.dataset.libId);
 
     try {
       await Api.saveConfig({

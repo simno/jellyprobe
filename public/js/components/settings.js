@@ -78,9 +78,9 @@ const SettingsPage = {
           apiKey: document.getElementById('setKey').value.trim()
         });
         res.innerHTML = r.success
-          ? `<span style="color:var(--green-400)">Connected to ${Utils.escapeHtml(r.serverName)}</span>`
-          : `<span style="color:var(--red-400)">${Utils.escapeHtml(r.error)}</span>`;
-      } catch (e) { res.innerHTML = `<span style="color:var(--red-400)">${Utils.escapeHtml(e.message)}</span>`; }
+          ? `<span class="text-success">Connected to ${Utils.escapeHtml(r.serverName)}</span>`
+          : `<span class="text-error">${Utils.escapeHtml(r.error)}</span>`;
+      } catch (e) { res.innerHTML = `<span class="text-error">${Utils.escapeHtml(e.message)}</span>`; }
     });
 
     document.getElementById('setConnSave').addEventListener('click', async () => {
@@ -115,31 +115,30 @@ const SettingsPage = {
     libs.map(lib => {
       const id = lib.ItemId || lib.Id;
       const sel = selectedIds.includes(id);
-      return `<label class="lib-check${sel ? ' selected' : ''}">
-                  <input type="checkbox" value="${id}" ${sel ? 'checked' : ''} />
-                  ${Utils.escapeHtml(lib.Name)}
-                  <span class="text-sm text-2" style="margin-left:auto">${lib.CollectionType || 'Mixed'}</span>
-                </label>`;
+      return `<div class="select-card select-card-compact${sel ? ' selected' : ''}" data-lib-id="${id}">
+                <div class="select-card-check">${sel ? '<i data-lucide="check"></i>' : ''}</div>
+                <div class="select-card-title">${Utils.escapeHtml(lib.Name)}</div>
+                <div class="select-card-meta">
+                  <span class="text-sm text-2">${lib.CollectionType || 'Mixed'}</span>
+                </div>
+              </div>`;
     }).join('')}
           </div>
           <button class="btn btn-primary mt-16" id="saveLibs"><i data-lucide="save"></i> Save</button>
         </div>
       </div>`;
 
-    // Toggle handler — clicking anywhere on the row toggles the checkbox
-    body.querySelectorAll('.lib-check').forEach(el => {
-      el.addEventListener('click', (e) => {
-        e.preventDefault();
-        const cb = el.querySelector('input');
-        if (e.target !== cb) {
-          cb.checked = !cb.checked;
-        }
-        el.classList.toggle('selected', cb.checked);
+    // Library card selection handler
+    body.querySelectorAll('.select-card[data-lib-id]').forEach(el => {
+      el.addEventListener('click', () => {
+        el.classList.toggle('selected');
+        el.querySelector('.select-card-check').innerHTML = el.classList.contains('selected') ? '<i data-lucide="check"></i>' : '';
+        if (typeof lucide !== 'undefined') lucide.createIcons();
       });
     });
 
     document.getElementById('saveLibs')?.addEventListener('click', async () => {
-      const ids = Array.from(document.querySelectorAll('#libSettings input:checked')).map(c => c.value);
+      const ids = Array.from(document.querySelectorAll('#libSettings .select-card.selected')).map(el => el.dataset.libId);
       try {
         await Api.saveConfig({ scanLibraryIds: JSON.stringify(ids) });
         const newConfig = await Api.getConfig();
@@ -317,7 +316,7 @@ const SettingsPage = {
           <div class="section-divider"></div>
           <div class="section-subtitle mb-12">Dashboard Previews</div>
           
-          <label class="form-check mb-12">
+          <label class="toggle-check">
             <input type="checkbox" id="setShowPreviews" ${config.showPreviews !== 0 ? 'checked' : ''} />
             <span>Show live previews on dashboard</span>
           </label>

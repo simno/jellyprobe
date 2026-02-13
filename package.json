@@ -10,7 +10,8 @@
     "test:watch": "jest --watch",
     "test:debug": "jest --coverage --detectOpenHandles --verbose",
     "lint": "eslint src/**/*.js public/js/**/*.js",
-    "lint:fix": "eslint src/**/*.js public/js/**/*.js --fix"
+    "lint:fix": "eslint src/**/*.js public/js/**/*.js --fix",
+    "check": "npm run lint && npm test"
   },
   "keywords": [
     "jellyfin",
