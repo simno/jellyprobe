@@ -124,13 +124,14 @@ class TestRunManager extends EventEmitter {
             path: item.Path,
             deviceId: device.id,
             deviceName: device.name,
-                      deviceConfig: {
-                        maxBitrate: device.maxBitrate,
-                        audioCodec: device.audioCodec,
-                        videoCodec: device.videoCodec,
-                        maxWidth: device.maxWidth,
-                        maxHeight: device.maxHeight
-                      },            testConfig: {
+            deviceConfig: {
+              maxBitrate: device.maxBitrate,
+              audioCodec: device.audioCodec,
+              videoCodec: device.videoCodec,
+              maxWidth: device.maxWidth,
+              maxHeight: device.maxHeight
+            },
+            testConfig: {
               duration: testConfig.duration,
               seekTest: testConfig.seekTest
             }
