@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#00a2ff;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#0066ff;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <!-- Jellyfish Body -->
+  <path d="M20,50 Q20,20 50,20 Q80,20 80,50 L80,55 Q50,65 20,55 Z" fill="url(#grad)" />
+  <!-- Tentacles -->
+  <path d="M30,55 L28,80 M40,60 L40,85 M50,62 L50,90 M60,60 L60,85 M70,55 L72,80" stroke="url(#grad)" stroke-width="4" stroke-linecap="round" />
+  <!-- Probe/Radar Circle -->
+  <circle cx="50" cy="40" r="10" fill="white" fill-opacity="0.2" stroke="white" stroke-width="2" />
+  <circle cx="50" cy="40" r="2" fill="white" />
+  <path d="M50,40 L65,25" stroke="white" stroke-width="2" stroke-linecap="round" />
+</svg>

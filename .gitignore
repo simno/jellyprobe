@@ -1,0 +1,40 @@
+# Test database files
+__tests__/**/*.db
+__tests__/**/*.db-*
+
+# Coverage directory
+coverage/
+.nyc_output/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Dependencies
+node_modules/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Database
+*.db
+*.db-shm
+*.db-wal
+data/*.db*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Build
+dist/
+build/
