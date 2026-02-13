@@ -14,6 +14,7 @@ const SettingsPage = {
           <button class="settings-nav-item" data-sec="libraries"><i data-lucide="library"></i> Libraries</button>
           <button class="settings-nav-item" data-sec="devices"><i data-lucide="monitor-speaker"></i> Devices</button>
           <button class="settings-nav-item" data-sec="testing"><i data-lucide="radar"></i> Testing</button>
+          <button class="settings-nav-item" data-sec="about"><i data-lucide="info"></i> About</button>
         </nav>
         <div id="settingsBody"></div>
       </div>`;
@@ -40,6 +41,7 @@ const SettingsPage = {
     case 'libraries': await this._renderLibraries(body); break;
     case 'devices': await this._renderDevices(body); break;
     case 'testing': this._renderTesting(body); break;
+    case 'about': await this._renderAbout(body); break;
     }
     if (typeof lucide !== 'undefined') lucide.createIcons();
   },
@@ -344,5 +346,37 @@ const SettingsPage = {
         Utils.toast('Testing settings saved', 'success');
       } catch (e) { Utils.toast(e.message, 'error'); }
     });
+  },
+
+  /* --- About --- */
+  async _renderAbout(body) {
+    let version;
+    try {
+      const versionData = await Api.getVersion();
+      version = versionData.version;
+    } catch (_e) {
+      version = 'Unknown';
+    }
+
+    body.innerHTML = `
+      <div class="settings-section">
+        <div class="section-title"><i data-lucide="info"></i> About JellyProbe</div>
+        <div class="card">
+          <div class="form-group">
+            <label class="form-label">Version</label>
+            <div style="padding: 10px; background: var(--surface-3); border-radius: 6px; font-family: monospace; font-weight: 500;">v${Utils.escapeHtml(version)}</div>
+          </div>
+          <p class="text-sm text-2" style="margin-top: 16px;">An automated testing tool for Jellyfin servers. Simulates real-world client playback by triggering transcoding and validating HLS stream delivery across multiple device profiles.</p>
+          <div style="margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--surface-2);">
+            <p class="text-sm text-2 mb-8">Resources:</p>
+            <div class="flex" style="gap: 8px; flex-wrap: wrap;">
+              <a href="https://github.com/simno/jellyprobe" target="_blank" class="btn btn-secondary btn-sm"><i data-lucide="github"></i> GitHub</a>
+              <a href="https://github.com/simno/jellyprobe/issues" target="_blank" class="btn btn-secondary btn-sm"><i data-lucide="bug"></i> Report Issue</a>
+            </div>
+          </div>
+        </div>
+      </div>`;
+
+    if (typeof lucide !== 'undefined') lucide.createIcons();
   }
 };

@@ -61,6 +61,59 @@ docker run -d \
     -   **Custom:** Search and select specific movies or episodes.
 4.  **Monitor:** Use the Dashboard to view progress. Use the **"Show passed"** toggle to hide successful tests and quickly identify playback errors.
 
+## Deployment
+
+### Using Docker Compose (Easiest)
+
+Use the provided `deploy.sh` script for interactive deployment:
+
+```bash
+./deploy.sh
+```
+
+This script will:
+- Check that Docker and Docker Compose are installed
+- Create/configure a `.env` file with your Jellyfin server details
+- Create a data directory for persistent storage
+- Guide you through deployment options (build & start, rebuild, stop, view logs, etc.)
+- Display the dashboard URL and health status
+
+**Deployment options:**
+1. **Build and start** (recommended for first time) - builds the Docker image and starts the container
+2. **Start existing container** - starts a previously built container
+3. **Rebuild and restart** - forces a full rebuild and restart
+4. **Stop container** - stops the running container
+5. **View logs** - stream live container logs
+
+After deployment, access the dashboard at `http://localhost:3000` and configure your Jellyfin connection in Settings.
+
+## Release Process
+
+To create a new release:
+
+```bash
+./release.sh [patch|minor|major]
+```
+
+**Example:**
+```bash
+./release.sh patch  # Releases v0.1.1 (if current is v0.1.0)
+./release.sh minor  # Releases v0.2.0
+./release.sh major  # Releases v1.0.0
+```
+
+**This script will:**
+1. Check you're on the `main` branch
+2. Verify there are no uncommitted changes
+3. Run `npm run check`
+4. Bump the version in `package.json`
+5. Update the version in `public/index.html`
+6. Create a git commit and tag
+7. Ask for confirmation before pushing to origin
+8. Push the commit and tag to GitHub (optional)
+
+**Note:** The version is also accessible via the `/api/version` endpoint and displayed in Settings → About.
+
 ## Development
 
 -   **Run tests:** `npm test`

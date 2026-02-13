@@ -16,6 +16,7 @@ const wss = new WebSocket.Server({ server });
 
 const PORT = process.env.PORT || 3000;
 const DATA_PATH = process.env.DATA_PATH || path.join(__dirname, '../data');
+const APP_VERSION = require('../package.json').version;
 
 // Security headers
 app.use((_req, res, next) => {
@@ -139,6 +140,10 @@ testRunManager.on('testRunCancelled', (data) => broadcast('testRunCancelled', da
 testRunManager.on('testRunCompleted', (data) => broadcast('testRunCompleted', data));
 testRunManager.on('testRunProgress', (data) => broadcast('testRunProgress', data));
 scheduler.on('scheduledRunStarted', (data) => broadcast('scheduledRunStarted', data));
+
+app.get('/api/version', (req, res) => {
+  res.json({ version: APP_VERSION });
+});
 
 app.get('/api/config', (req, res) => {
   try {
