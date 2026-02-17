@@ -5,7 +5,7 @@
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Test](https://github.com/simno/jellyprobe/actions/workflows/test.yml/badge.svg)](https://github.com/simno/jellyprobe/actions/workflows/test.yml)
 [![Docker](https://github.com/simno/jellyprobe/actions/workflows/docker.yml/badge.svg)](https://github.com/simno/jellyprobe/actions/workflows/docker.yml)
-[![Docker Version](https://ghcr-badge.egpl.dev/simno/jellyprobe/tags?label=version&n=1&ignore=sha256*,latest,0)](https://github.com/simno/jellyprobe/pkgs/container/jellyprobe)
+[![Version](https://img.shields.io/github/package-json/v/simno/jellyprobe?label=version)](https://github.com/simno/jellyprobe)
 [![Node](https://img.shields.io/badge/node-%3E%3D25-brightgreen.svg)](https://nodejs.org)
 
 JellyProbe is an automated testing tool for [Jellyfin](https://github.com/jellyfin/jellyfin) servers. It simulates real-world client playback by triggering 
