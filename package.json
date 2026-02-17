@@ -1,6 +1,6 @@
 {
   "name": "jellyprobe",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Dockerized testing tool for Jellyfin servers with automated playback tests",
   "main": "src/index.js",
   "scripts": {
