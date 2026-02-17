@@ -5,9 +5,16 @@ npm-debug.log
 *.md
 .git
 .gitignore
+.github
+.dockerignore
 data/*.db
 data/*.db-shm
 data/*.db-wal
 .DS_Store
 deploy.sh
 docker-compose.yml
+__tests__
+coverage
+eslint.config.js
+jest.config.js
+docs
