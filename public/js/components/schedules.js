@@ -1,5 +1,3 @@
-/* schedules.js — Manage scheduled test runs */
-
 const SchedulesPage = {
   render() {
     return `
@@ -73,7 +71,6 @@ const SchedulesPage = {
           </div>`;
       }).join('');
 
-      // Event handlers
       container.querySelectorAll('.sched-toggle').forEach(btn => {
         btn.addEventListener('click', async (e) => {
           e.stopPropagation();

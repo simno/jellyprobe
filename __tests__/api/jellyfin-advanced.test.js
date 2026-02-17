@@ -196,7 +196,7 @@ describe('JellyfinClient - Advanced', () => {
     test('should handle various bitrate values', () => {
       const bitrates = [
         800000,    // 0.8 Mbps (mobile)
-        4000000,   // 4 Mbps (720p)
+        3000000,   // 3 Mbps (720p)
         10000000,  // 10 Mbps (1080p)
         25000000,  // 25 Mbps (Blu-ray)
         50000000,  // 50 Mbps (4K)

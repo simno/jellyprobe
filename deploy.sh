@@ -26,9 +26,13 @@ if [ ! -f .env ]; then
     read -sp "Enter Jellyfin API Key: " API_KEY
     echo ""
     
+    read -p "Enter timezone (default: UTC, e.g. Europe/Berlin): " TZ_VALUE
+    TZ_VALUE=${TZ_VALUE:-UTC}
+
     # Update .env file
     sed -i.bak "s|JELLYFIN_URL=.*|JELLYFIN_URL=$JELLYFIN_URL|" .env
     sed -i.bak "s|API_KEY=.*|API_KEY=$API_KEY|" .env
+    sed -i.bak "s|TZ=.*|TZ=$TZ_VALUE|" .env
     rm .env.bak 2>/dev/null || true
     
     echo "✅ .env file configured"

@@ -9,7 +9,6 @@ describe('LibraryScanner - Advanced', () => {
   let scanner;
   let mockJellyfinClient;
   let mockDb;
-  let mockTestRunner;
   let emittedEvents;
 
   beforeEach(() => {
@@ -37,11 +36,7 @@ describe('LibraryScanner - Advanced', () => {
       ])
     };
 
-    mockTestRunner = {
-      queueTest: jest.fn()
-    };
-
-    scanner = new LibraryScanner(mockJellyfinClient, mockDb, mockTestRunner);
+    scanner = new LibraryScanner(mockJellyfinClient, mockDb);
 
     // Track emitted events
     scanner.on('scanStarted', () => emittedEvents.push('scanStarted'));

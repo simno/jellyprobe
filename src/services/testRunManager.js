@@ -12,12 +12,12 @@ class TestRunManager extends EventEmitter {
   generateTestRunName() {
     const date = new Date();
     const dateStr = date.toISOString().split('T')[0];
-    const timeStr = date.toTimeString().split(' ')[0].replace(/:/g, '');
+    const timeStr = date.toTimeString().split(' ')[0].slice(0, 5);
     return `Test Run ${dateStr} ${timeStr}`;
   }
 
-  createTestRun(config) {
-    const name = this.generateTestRunName();
+  createTestRun(config, name) {
+    if (!name) name = this.generateTestRunName();
     
     // Config now supports:
     // { devices, mediaScope: { type: 'all'|'recent'|'custom', libraryIds, days, itemIds }, testConfig }
@@ -45,12 +45,15 @@ class TestRunManager extends EventEmitter {
     }
 
     this.currentRunId = runId;
+
+    // Clear any leftover items from a previous run
+    this.testRunner.clearQueue();
+
     this.db.updateTestRun(runId, {
       status: 'running',
       startedAt: new Date().toISOString()
     });
 
-    // Set parallel tests from config (if available)
     const config = this.db.getConfig();
     if (config && config.maxParallelTests) {
       this.testRunner.setMaxParallelTests(config.maxParallelTests);
@@ -58,18 +61,23 @@ class TestRunManager extends EventEmitter {
     }
 
     const scope = testRun.config.mediaScope;
-    const { devices, testConfig } = testRun.config;
+    const { devices, testConfig, mediaItems } = testRun.config;
+
+    console.log(`[TestRunManager] Starting test run ${runId}:`);
+    console.log(`  - testRun.config keys: ${Object.keys(testRun.config).join(', ')}`);
+    console.log(`  - scope: ${JSON.stringify(scope)}`);
+    console.log(`  - testConfig: ${JSON.stringify(testConfig)}`);
+    console.log(`  - mediaItems: ${Array.isArray(mediaItems) ? mediaItems.length + ' items' : 'undefined/null'}`);
 
     try {
-      // Start processing queue immediately (for responsive UX)
-      this.testRunner.processQueue();
       this.emit('testRunStarted', { id: runId });
 
-      // Fetch and queue media items in batches (non-blocking)
-      this._queueMediaItemsInBatches(runId, devices, scope, testConfig).catch(err => {
-        console.error(`Failed to queue media items for test run ${runId}:`, err.message);
-        this.emit('testRunError', { id: runId, error: err.message });
-      });
+      // Fetch and queue media items in batches — processing starts as items arrive
+      this._queueMediaItemsInBatches(runId, devices, scope, testConfig || {})
+        .catch(err => {
+          console.error(`Failed to queue media items for test run ${runId}:`, err.message);
+          this.emit('testRunError', { id: runId, error: err.message });
+        });
 
     } catch (err) {
       console.error(`Failed to start test run ${runId}:`, err.message);
@@ -86,73 +94,88 @@ class TestRunManager extends EventEmitter {
     let totalQueued = 0;
 
     try {
-      if (scope) {
-        if (scope.type === 'all') {
-          // Fetch all libraries' items in batches
-          for (const libId of scope.libraryIds) {
-            let start = 0, hasMore = true;
-            while (hasMore) {
-              const r = await this.jellyfinClient.getLibraryItems(libId, BATCH_SIZE, start);
-              if (r.items && r.items.length > 0) {
-                totalQueued += this._queueTestBatch(runId, devices, r.items, testConfig);
-                start += r.items.length;
-                hasMore = r.totalCount > start;
-              } else {
-                hasMore = false;
-              }
-            }
-          }
-        } else if (scope.type === 'recent') {
-          const days = scope.days || 7;
-          for (const libId of scope.libraryIds) {
-            const r = await this.jellyfinClient.getRecentLibraryItems(libId, days, 10000);
+      console.log(`[TestRunManager] Queueing media: scope=${JSON.stringify(scope)}, devices=${devices.length}`);
+
+      if (scope && scope.type === 'all') {
+        for (const libId of scope.libraryIds) {
+          let start = 0, hasMore = true;
+          while (hasMore) {
+            const r = await this.jellyfinClient.getLibraryItems(libId, BATCH_SIZE, start);
             if (r.items && r.items.length > 0) {
               totalQueued += this._queueTestBatch(runId, devices, r.items, testConfig);
+              this.testRunner.processQueue();
+              start += r.items.length;
+              hasMore = r.totalCount > start;
+            } else {
+              hasMore = false;
             }
           }
-        } else if (scope.type === 'custom' && scope.itemIds) {
-          // Fetch specific items by ID in batches
-          const items = [];
-          for (const itemId of scope.itemIds) {
-            try {
-              const item = await this.jellyfinClient.getItem(itemId);
-              if (item) items.push(item);
-            } catch (e) {
-              console.warn(`Failed to fetch item ${itemId}: ${e.message}`);
+        }
+      } else if (scope && scope.type === 'recent') {
+        const days = scope.days || 7;
+        // If itemIds were pinned at launch, use them to filter the bulk
+        // fetch so the run tests exactly what the user previewed.
+        const pinnedIds = Array.isArray(scope.itemIds) && scope.itemIds.length > 0
+          ? new Set(scope.itemIds) : null;
+        for (const libId of scope.libraryIds) {
+          const r = await this.jellyfinClient.getRecentLibraryItems(libId, days, 10000);
+          if (r.items && r.items.length > 0) {
+            const items = pinnedIds ? r.items.filter(i => pinnedIds.has(i.Id)) : r.items;
+            if (items.length > 0) {
+              totalQueued += this._queueTestBatch(runId, devices, items, testConfig);
+              this.testRunner.processQueue();
             }
           }
-          if (items.length > 0) {
-            totalQueued += this._queueTestBatch(runId, devices, items, testConfig);
+        }
+      } else if (scope && scope.type === 'custom' && scope.itemIds) {
+        const items = [];
+        for (const itemId of scope.itemIds) {
+          try {
+            const item = await this.jellyfinClient.getItem(itemId);
+            if (item) items.push(item);
+          } catch (e) {
+            console.warn(`[TestRunManager] Failed to fetch item ${itemId}: ${e.message}`);
           }
+        }
+        if (items.length > 0) {
+          totalQueued += this._queueTestBatch(runId, devices, items, testConfig);
+          this.testRunner.processQueue();
         }
       }
 
-      // Fallback for legacy mediaItems (if passed directly)
+      // Fallback: use mediaItems from config (legacy / no scope)
       if (totalQueued === 0) {
         const testRun = this.db.getTestRun(runId);
-        if (testRun && testRun.config.mediaItems) {
+        if (testRun && testRun.config.mediaItems && testRun.config.mediaItems.length > 0) {
+          console.log(`[TestRunManager] Using mediaItems fallback: ${testRun.config.mediaItems.length} items`);
           totalQueued += this._queueTestBatch(runId, devices, testRun.config.mediaItems, testConfig);
+          this.testRunner.processQueue();
+        } else {
+          console.warn(`[TestRunManager] No items resolved for run ${runId} (scope=${JSON.stringify(scope)})`);
         }
       }
 
-      // Update total tests count if different
+      console.log(`[TestRunManager] Total queued tests: ${totalQueued}`);
+
+      // Correct totalTests if the actual count differs from the estimate
       const testRun = this.db.getTestRun(runId);
-      const estimatedTotal = testRun.totalTests;
-      if (totalQueued !== estimatedTotal && estimatedTotal > 0) {
-        console.log(`Updated: queued ${totalQueued} tests (estimated ${estimatedTotal})`);
+      if (totalQueued !== testRun.totalTests && totalQueued > 0) {
         this.db.updateTestRun(runId, { totalTests: totalQueued });
       }
     } catch (err) {
-      console.error(`Error queuing media items: ${err.message}`);
+      console.error(`[TestRunManager] Error queuing media for run ${runId}: ${err.message}`);
       throw err;
     }
   }
 
   _queueTestBatch(runId, devices, items, testConfig) {
-    const tests = [];
+    // Ensure testConfig is an object so accessing properties is safe
+    testConfig = testConfig || {};
 
-    for (const device of devices) {
-      for (const item of items) {
+    // Build per-device queues with independently shuffled item orders,
+    // then interleave round-robin so parallel tests hit different items.
+    const perDevice = devices.map(device => {
+      const deviceTests = items.map(item => {
         let itemName = item.Name;
         if (item.Type === 'Episode' && item.SeriesName) {
           const season = item.ParentIndexNumber ? `S${item.ParentIndexNumber}` : '';
@@ -161,14 +184,16 @@ class TestRunManager extends EventEmitter {
           itemName = `${item.SeriesName}${episodeNum} - ${item.Name}`;
         }
 
-        tests.push({
+        return {
           testRunId: runId,
           itemId: item.Id,
           itemName: itemName,
           path: item.Path,
+          container: item.Container || '',
           deviceId: device.id,
           deviceName: device.name,
           deviceConfig: {
+            deviceId: device.deviceId,
             maxBitrate: device.maxBitrate,
             audioCodec: device.audioCodec,
             videoCodec: device.videoCodec,
@@ -176,23 +201,31 @@ class TestRunManager extends EventEmitter {
             maxHeight: device.maxHeight
           },
           testConfig: {
-            duration: testConfig.duration,
-            seekTest: testConfig.seekTest
+            duration: testConfig.duration || undefined
           }
-        });
+        };
+      });
+
+      for (let i = deviceTests.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [deviceTests[i], deviceTests[j]] = [deviceTests[j], deviceTests[i]];
+      }
+      return deviceTests;
+    });
+
+    // Interleave: round-robin across devices so consecutive tests use different items
+    const tests = [];
+    const maxLen = Math.max(...perDevice.map(q => q.length));
+    for (let i = 0; i < maxLen; i++) {
+      for (const queue of perDevice) {
+        if (i < queue.length) tests.push(queue[i]);
       }
     }
 
-    // Shuffle this batch
-    for (let i = tests.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [tests[i], tests[j]] = [tests[j], tests[i]];
-    }
-
-    // Queue all tests in this batch
     for (const t of tests) {
       this.testRunner.addTestToQueue(t);
     }
+
 
     return tests.length;
   }
@@ -233,34 +266,37 @@ class TestRunManager extends EventEmitter {
   }
 
   onTestComplete(testResult) {
-    if (!this.currentRunId) return;
+    // Use the testRunId from the result itself so completions are attributed
+    // to the correct run even when a newer run has started.
+    const runId = testResult.testRunId || this.currentRunId;
+    if (!runId) return;
 
-    const testRun = this.db.getTestRun(this.currentRunId);
+    const testRun = this.db.getTestRun(runId);
     if (!testRun) return;
 
     const completed = testRun.completedTests + 1;
     const successful = testRun.successfulTests + (testResult.success ? 1 : 0);
     const failed = testRun.failedTests + (testResult.success ? 0 : 1);
 
-    this.db.updateTestRunProgress(this.currentRunId, completed, successful, failed);
+    this.db.updateTestRunProgress(runId, completed, successful, failed);
 
-    // Always emit progress update (including final 100%)
     this.emit('testRunProgress', {
-      id: this.currentRunId,
+      id: runId,
       completed,
       total: testRun.totalTests,
       successful,
       failed
     });
 
-    // Check if all tests are complete
     if (completed >= testRun.totalTests) {
-      this.db.updateTestRun(this.currentRunId, {
+      this.db.updateTestRun(runId, {
         status: 'completed',
         completedAt: new Date().toISOString()
       });
-      this.emit('testRunCompleted', { id: this.currentRunId });
-      this.currentRunId = null;
+      this.emit('testRunCompleted', { id: runId });
+      if (this.currentRunId === runId) {
+        this.currentRunId = null;
+      }
     }
   }
 

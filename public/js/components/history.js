@@ -1,5 +1,3 @@
-/* history.js — Browse past test runs */
- 
 const HistoryPage = {
   render() {
     return `
@@ -58,6 +56,9 @@ const HistoryPage = {
       ]);
 
       const pct = run.totalTests > 0 ? Math.round((run.completedTests / run.totalTests) * 100) : 0;
+      const runTime = (run.startedAt && run.completedAt)
+        ? Utils.formatDuration(Math.round((new Date(run.completedAt) - new Date(run.startedAt)) / 1000))
+        : null;
 
       container.innerHTML = `
         <button class="btn btn-ghost btn-sm mb-16" id="histBack"><i data-lucide="arrow-left"></i> Back to list</button>
@@ -70,6 +71,7 @@ const HistoryPage = {
           <div class="stat-card success"><div class="stat-label">Passed</div><div class="stat-value">${run.successfulTests || 0}</div></div>
           <div class="stat-card danger"><div class="stat-label">Failed</div><div class="stat-value">${run.failedTests || 0}</div></div>
           <div class="stat-card"><div class="stat-label">Progress</div><div class="stat-value">${pct}%</div></div>
+          ${runTime ? `<div class="stat-card"><div class="stat-label">Run Time</div><div class="stat-value">${runTime}</div></div>` : ''}
         </div>
 
         <div class="flex align-center gap-12 mb-12">

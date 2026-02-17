@@ -1,5 +1,3 @@
-/* api.js — API client */
- 
 const Api = {
   _timeout: 30000,
 

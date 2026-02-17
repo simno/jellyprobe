@@ -18,8 +18,8 @@ describe('TestRunManager', () => {
 
     // Mock test runner
     mockTestRunner = new EventEmitter();
-    mockTestRunner.addTest = jest.fn();
     mockTestRunner.addTestToQueue = jest.fn();
+    mockTestRunner.clearQueue = jest.fn();
     mockTestRunner.processQueue = jest.fn();
     mockTestRunner.setMaxParallelTests = jest.fn();
     mockTestRunner.pause = jest.fn();

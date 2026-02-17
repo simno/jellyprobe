@@ -21,7 +21,8 @@ module.exports = [
         clearInterval: 'readonly',
         Promise: 'readonly',
         URLSearchParams: 'readonly',
-        URL: 'readonly'
+        URL: 'readonly',
+        AbortController: 'readonly'
       }
     },
     rules: {

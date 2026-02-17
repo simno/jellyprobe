@@ -5,8 +5,6 @@ describe('LibraryScanner', () => {
   let scanner;
   let mockJellyfinClient;
   let mockDb;
-  let mockTestRunner;
-
   beforeEach(() => {
     mockJellyfinClient = {
       getNewItems: jest.fn()
@@ -29,11 +27,7 @@ describe('LibraryScanner', () => {
       ])
     };
 
-    mockTestRunner = {
-      queueTest: jest.fn()
-    };
-
-    scanner = new LibraryScanner(mockJellyfinClient, mockDb, mockTestRunner);
+    scanner = new LibraryScanner(mockJellyfinClient, mockDb);
   });
 
   afterEach(() => {

@@ -2,11 +2,10 @@ const cron = require('node-cron');
 const EventEmitter = require('events');
 
 class LibraryScanner extends EventEmitter {
-  constructor(jellyfinClient, db, testRunner) {
+  constructor(jellyfinClient, db) {
     super();
     this.jellyfinClient = jellyfinClient;
     this.db = db;
-    this.testRunner = testRunner;
     this.cronJob = null;
     this.isScanning = false;
   }
@@ -14,7 +13,6 @@ class LibraryScanner extends EventEmitter {
   start() {
     const config = this.db.getConfig();
     
-    // Check for new scanLibraryIds field (JSON array)
     const libraryIds = config.scanLibraryIds ? JSON.parse(config.scanLibraryIds) : [];
     
     if (libraryIds.length === 0 || !config.scanInterval) {
@@ -70,7 +68,6 @@ class LibraryScanner extends EventEmitter {
       
       console.log(`Scanning ${libraryIds.length} libraries for items since ${lastScanTime}`);
 
-      // Scan all libraries in parallel
       const scanPromises = libraryIds.map(libraryId => 
         this.jellyfinClient.getNewItems(libraryId, lastScanTime)
           .catch(err => {
@@ -84,38 +81,8 @@ class LibraryScanner extends EventEmitter {
 
       console.log(`Found ${newItems.length} new items across all libraries`);
 
-      if (newItems.length > 0) {
-        const devices = this.db.getAllDevices();
-        
-        if (devices.length === 0) {
-          console.log('No test devices configured');
-          return;
-        }
-
-        const formats = config.formats || [];
-        let queuedCount = 0;
-
-        for (const item of newItems) {
-          const itemFormat = item.Container?.toLowerCase();
-          
-          if (formats.length === 0 || formats.includes(itemFormat)) {
-            const device = devices[0];
-            await this.testRunner.queueTest(item.Id, device.id, {
-              duration: config.testDuration
-            });
-            queuedCount++;
-          }
-        }
-
-        this.emit('scanCompleted', { 
-          itemsFound: newItems.length, 
-          itemsQueued: queuedCount 
-        });
-
-        this.db.updateScanState(new Date().toISOString(), queuedCount);
-      } else {
-        this.emit('scanCompleted', { itemsFound: 0, itemsQueued: 0 });
-      }
+      this.emit('scanCompleted', { itemsFound: newItems.length });
+      this.db.updateScanState(new Date().toISOString(), newItems.length);
 
     } catch (error) {
       console.error('Scan error:', error.message);

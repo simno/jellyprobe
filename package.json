@@ -17,10 +17,20 @@
     "jellyfin",
     "testing",
     "docker",
-    "media-server"
+    "media-server",
+    "hls",
+    "transcoding"
   ],
-  "author": "",
+  "author": "simno",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/simno/jellyprobe"
+  },
+  "homepage": "https://github.com/simno/jellyprobe",
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "dependencies": {
     "axios": "^1.13.4",
     "better-sqlite3": "^12.6.2",

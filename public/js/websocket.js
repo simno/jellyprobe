@@ -1,5 +1,3 @@
-/* websocket.js — WebSocket client with auto-reconnect */
- 
 const WS = {
   _ws: null,
   _reconnectTimer: null,
@@ -33,6 +31,11 @@ const WS = {
   on(event, fn) {
     if (!this._handlers[event]) this._handlers[event] = [];
     this._handlers[event].push(fn);
+  },
+
+  off(event, fn) {
+    if (!this._handlers[event]) return;
+    this._handlers[event] = this._handlers[event].filter(f => f !== fn);
   },
 
   _dispatch(event, data) {

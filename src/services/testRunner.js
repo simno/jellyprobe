@@ -1,5 +1,9 @@
 const EventEmitter = require('events');
 
+// Spread/jitter range values (ms)
+const MIN_SPREAD_MS = 500; // min 0.5s
+const MAX_SPREAD_MS = 120000; // max 2 minutes
+
 class TestRunner extends EventEmitter {
   constructor(jellyfinClient, db) {
     super();
@@ -11,28 +15,43 @@ class TestRunner extends EventEmitter {
     this.isCancelled = false;
     this.currentTests = [];
     this.maxParallelTests = 1;
+
+    // scheduled start timers: [{ timer, test }]
+    this._scheduledStarts = [];
+
+    // active AbortControllers for in-flight HLS downloads
+    this._abortControllers = new Set();
   }
 
   async queueTest(itemId, deviceId, options = {}) {
-    this.testQueue.push({ itemId, deviceId, options });
-    this.emit('queueUpdated', { 
-      queueLength: this.testQueue.length,
-      activeTests: this.currentTests.length
-    });
-    
-    if (!this.isRunning) {
-      this.processQueue();
+    const device = this.db.getDevice(deviceId);
+    if (!device) {
+      throw new Error(`Device ${deviceId} not found`);
     }
-  }
 
-  // New method for v2.0 - add full test object to queue
-  addTest(testObject) {
-    this.testQueue.push(testObject);
-    this.emit('queueUpdated', { 
+    const config = this.db.getConfig() || {};
+    const testObj = {
+      itemId,
+      deviceId,
+      deviceConfig: {
+        deviceId: device.deviceId,
+        maxBitrate: device.maxBitrate,
+        audioCodec: device.audioCodec,
+        videoCodec: device.videoCodec,
+        maxWidth: device.maxWidth || 1920,
+        maxHeight: device.maxHeight || 1080
+      },
+      testConfig: {
+        duration: options.duration !== undefined ? options.duration : (config.testDuration || 30)
+      }
+    };
+
+    this.testQueue.push(testObj);
+    this.emit('queueUpdated', {
       queueLength: this.testQueue.length,
       activeTests: this.currentTests.length
     });
-    
+
     if (!this.isRunning) {
       this.processQueue();
     }
@@ -45,11 +64,14 @@ class TestRunner extends EventEmitter {
       queueLength: this.testQueue.length,
       activeTests: this.currentTests.length
     });
+
+    // Note: do not automatically start processing here — callers may intentionally batch-add tests
   }
 
   pause() {
     if (!this.isPaused) {
       this.isPaused = true;
+      this._clearScheduledStarts(true);
       this.emit('paused');
     }
   }
@@ -68,22 +90,93 @@ class TestRunner extends EventEmitter {
     this.testQueue = [];
     this.isCancelled = true;
     this.isRunning = false;
+    this._clearScheduledStarts(false);
+    for (const ac of this._abortControllers) {
+      ac.abort();
+    }
+    this._abortControllers.clear();
+    const pending = this.currentTests.slice();
+    return pending.length > 0
+      ? Promise.allSettled(pending)
+      : Promise.resolve();
   }
 
   cancel() {
     this.testQueue = [];
     this.isPaused = false;
-    this.isCancelled = true; // Add cancellation flag
+    this.isCancelled = true;
+    this._clearScheduledStarts(false);
+    for (const ac of this._abortControllers) {
+      ac.abort();
+    }
+    this._abortControllers.clear();
     this.emit('cancelled');
-    this.emit('queueUpdated', { 
+    this.emit('queueUpdated', {
       queueLength: 0,
       activeTests: this.currentTests.length
     });
+    const pending = this.currentTests.slice();
+    return pending.length > 0
+      ? Promise.allSettled(pending)
+      : Promise.resolve();
   }
 
   setMaxParallelTests(max) {
     this.maxParallelTests = Math.max(1, Math.min(10, max));
     console.log(`[TestRunner] maxParallelTests set to ${this.maxParallelTests} (requested: ${max})`);
+  }
+
+  // Helper: clear scheduled start timers. If returnToQueue=true, push tests back to front of queue
+  _clearScheduledStarts(returnToQueue = true) {
+    if (!this._scheduledStarts || this._scheduledStarts.length === 0) return;
+    for (const entry of this._scheduledStarts) {
+      try { clearTimeout(entry.timer); } catch (_e) { /* ignore */ }
+      if (returnToQueue && entry.test) {
+        this.testQueue.unshift(entry.test);
+      }
+    }
+    this._scheduledStarts = [];
+    this.emit('queueUpdated', { queueLength: this.testQueue.length, activeTests: this.currentTests.length });
+  }
+
+  _startTestImmediate(test) {
+    if (this.isCancelled) return;
+    if (this.isPaused) {
+      this.testQueue.unshift(test);
+      this.emit('queueUpdated', { queueLength: this.testQueue.length, activeTests: this.currentTests.length });
+      return;
+    }
+
+    // Enforce parallel limit — a jitter timer may fire after other tests filled slots
+    if (this.currentTests.length >= this.maxParallelTests) {
+      this.testQueue.unshift(test);
+      this._scheduledStarts = this._scheduledStarts.filter(s => s.test !== test);
+      this.emit('queueUpdated', { queueLength: this.testQueue.length, activeTests: this.currentTests.length });
+      return;
+    }
+
+    this._scheduledStarts = this._scheduledStarts.filter(s => s.test !== test);
+
+    const testPromise = this.runTest(test);
+    this.currentTests.push(testPromise);
+    this.emit('scheduledStart');
+
+    testPromise.finally(() => {
+      const index = this.currentTests.indexOf(testPromise);
+      if (index > -1) {
+        this.currentTests.splice(index, 1);
+      }
+
+      this.emit('queueUpdated', {
+        queueLength: this.testQueue.length,
+        activeTests: this.currentTests.length
+      });
+    });
+
+    this.emit('queueUpdated', {
+      queueLength: this.testQueue.length,
+      activeTests: this.currentTests.length
+    });
   }
 
   async processQueue() {
@@ -92,214 +185,106 @@ class TestRunner extends EventEmitter {
     }
 
     this.isRunning = true;
-    this.isCancelled = false; // Reset cancellation flag
+    this.isCancelled = false;
 
-    while ((this.testQueue.length > 0 || this.currentTests.length > 0) && !this.isCancelled) {
-      // Check if cancelled
+    while ((this.testQueue.length > 0 || this.currentTests.length > 0 || this._scheduledStarts.length > 0) && !this.isCancelled) {
       if (this.isCancelled) {
         break;
       }
 
-      // Check if paused
       if (this.isPaused) {
         await new Promise(resolve => {
           this.once('resumed', resolve);
         });
       }
 
-      // Check if cancelled again after resume
       if (this.isCancelled) {
         break;
       }
 
-      // Start new tests up to max parallel
-      while (this.testQueue.length > 0 && this.currentTests.length < this.maxParallelTests && !this.isCancelled) {
-        const test = this.testQueue.shift();
-        
-        // Handle both old format (itemId, deviceId, options) and new format (full test object)
-        const testPromise = test.itemId && test.deviceId && !test.testRunId
-          ? this.runTest(test.itemId, test.deviceId, test.options)
-          : this.runTestV2(test);
-        
-        // Add to currentTests FIRST
-        this.currentTests.push(testPromise);
-        
-        // Set up cleanup when test completes
-        testPromise.finally(() => {
-          // Remove from currentTests array
-          const index = this.currentTests.indexOf(testPromise);
-          if (index > -1) {
-            this.currentTests.splice(index, 1);
-          }
-          
-          this.emit('queueUpdated', { 
-            queueLength: this.testQueue.length,
-            activeTests: this.currentTests.length
-          });
-        });
-        
-        this.emit('queueUpdated', { 
-          queueLength: this.testQueue.length,
-          activeTests: this.currentTests.length
-        });
+      const availableSlots = Math.max(0, this.maxParallelTests - this.currentTests.length - this._scheduledStarts.length);
+      if (availableSlots <= 0) {
+        if (this.currentTests.length > 0) {
+          await Promise.race(this.currentTests);
+          // Small delay to allow cleanup and event processing
+          await new Promise(resolve => setTimeout(resolve, 50));
+          continue;
+        }
       }
 
-      // Wait for at least one test to complete before continuing
-      // Only wait if we have tests running
-      if (this.currentTests.length > 0 && !this.isCancelled) {
+      const slotsToFill = Math.min(this.testQueue.length, availableSlots);
+
+      if (slotsToFill > 0) {
+        // Compute spread/jitter duration (ms). Feature is opt-in: config.spreadStartOverMs > 0 enables spreading.
+        const config = this.db.getConfig() || {};
+        let spreadMs;
+        if (typeof config.spreadStartOverMs === 'number' && config.spreadStartOverMs > 0) {
+          spreadMs = Math.min(MAX_SPREAD_MS, Math.max(MIN_SPREAD_MS, Math.floor(config.spreadStartOverMs)));
+        } else {
+          // Fallback: use configured test duration (seconds) if available
+          const testDurationSec = (config.testDuration && Number.isFinite(Number(config.testDuration))) ? Number(config.testDuration) : null;
+          if (testDurationSec && testDurationSec > 0) {
+            spreadMs = Math.min(MAX_SPREAD_MS, Math.max(MIN_SPREAD_MS, Math.floor(testDurationSec * 1000)));
+          } else {
+            // No config -> default spread disabled (0) to keep previous behaviour
+            spreadMs = 0;
+          }
+        }
+
+        if (spreadMs <= 0 || slotsToFill === 1) {
+          for (let i = 0; i < slotsToFill; i++) {
+            const test = this.testQueue.shift();
+            this._startTestImmediate(test);
+          }
+        } else {
+          for (let i = 0; i < slotsToFill; i++) {
+            const test = this.testQueue.shift();
+            const delay = Math.round((i / slotsToFill) * spreadMs);
+            const timer = setTimeout(() => {
+              if (!this.isCancelled) {
+                this._startTestImmediate(test);
+              }
+            }, delay);
+
+            this._scheduledStarts.push({ timer, test });
+            this.emit('queueUpdated', { queueLength: this.testQueue.length, activeTests: this.currentTests.length });
+          }
+        }
+      }
+
+      // Wait for at least one test to complete OR a scheduled start to fire
+      if (this.currentTests.length > 0) {
         await Promise.race(this.currentTests);
         // Small delay to allow cleanup and event processing
+        await new Promise(resolve => setTimeout(resolve, 50));
+      } else if (this._scheduledStarts.length > 0) {
+        // Wait until a scheduled start occurs (emitted in _startTestImmediate)
+        await new Promise(resolve => this.once('scheduledStart', resolve));
+      } else {
+        // Nothing running or scheduled; small sleep to avoid busy loop
         await new Promise(resolve => setTimeout(resolve, 50));
       }
     }
 
     this.isRunning = false;
-    this.isCancelled = false; // Reset flag
+    this.isCancelled = false;
   }
 
-  async runTest(itemId, deviceId, options = {}) {
+  async runTest(testObj) {
+    const abortController = new AbortController();
+    this._abortControllers.add(abortController);
+
     const startTime = Date.now();
-    let testResult = {
-      itemId,
-      itemName: '',
-      path: '',
-      deviceId,
-      format: '',
-      duration: 0,
-      errors: [],
-      success: false
-    };
-
-    this.emit('testStarted', testResult);
-
-    try {
-      const item = await this.jellyfinClient.getItem(itemId);
-      testResult.itemName = item.Name;
-      testResult.path = item.Path || '';
-      testResult.format = item.Container || '';
-
-      this.emit('testProgress', { ...testResult, stage: 'Fetching item info' });
-
-      const device = this.db.getDevice(deviceId);
-      if (!device) {
-        throw new Error(`Device ${deviceId} not found`);
-      }
-
-      this.emit('testProgress', { ...testResult, stage: 'Starting playback session' });
-
-      const playbackInfo = await this.jellyfinClient.startPlaybackSession(itemId, device.deviceId, {
-        maxBitrate: device.maxBitrate,
-        audioCodec: device.audioCodec,
-        videoCodec: device.videoCodec,
-        maxWidth: device.maxWidth || 1920,
-        maxHeight: device.maxHeight || 1080
-      });
-
-      if (!playbackInfo.MediaSources || playbackInfo.MediaSources.length === 0) {
-        throw new Error('No media sources available');
-      }
-
-      const mediaSource = playbackInfo.MediaSources[0];
-      const playSessionId = playbackInfo.PlaySessionId || mediaSource.Id;
-
-      if (mediaSource.RequiresOpening) {
-        this.emit('testProgress', { ...testResult, stage: 'Opening media stream' });
-      }
-
-      const config = this.db.getConfig();
-      const testDuration = (options.duration !== undefined) ? options.duration : (config.testDuration || 30);
-      const ticksPerSecond = 10000000;
-
-      this.emit('testProgress', { 
-        ...testResult, 
-        stage: `Testing playback for ${testDuration}s` 
-      });
-
-      for (let elapsed = 0; elapsed < testDuration; elapsed += 5) {
-        const positionTicks = elapsed * ticksPerSecond;
-        
-        await this.jellyfinClient.reportPlaybackProgress(
-          itemId,
-          playSessionId,
-          positionTicks,
-          device.deviceId
-        );
-
-        this.emit('testProgress', {
-          ...testResult,
-          stage: `Testing: ${elapsed}s / ${testDuration}s`
-        });
-
-        await new Promise(resolve => setTimeout(resolve, 5000));
-      }
-
-      const finalPositionTicks = testDuration * ticksPerSecond;
-      await this.jellyfinClient.stopPlayback(
-        itemId,
-        playSessionId,
-        finalPositionTicks,
-        device.deviceId
-      );
-
-      const sessions = await this.jellyfinClient.getActiveSessions();
-      const activeSession = sessions.find(s => 
-        s.DeviceId === device.deviceId && 
-        s.NowPlayingItem?.Id === itemId
-      );
-
-      if (activeSession && activeSession.PlayState?.PlayMethod === 'Transcode') {
-        this.emit('testProgress', { ...testResult, stage: 'Transcoding detected' });
-      }
-
-      testResult.success = true;
-      testResult.duration = Math.floor((Date.now() - startTime) / 1000);
-
-      this.emit('testProgress', { ...testResult, stage: 'Test completed successfully' });
-
-    } catch (error) {
-      testResult.errors.push(error.message);
-      testResult.success = false;
-      testResult.duration = Math.floor((Date.now() - startTime) / 1000);
-      
-      this.emit('testProgress', { 
-        ...testResult, 
-        stage: `Test failed: ${error.message}` 
-      });
-    }
-
-    this.db.addTestResult(testResult);
-    this.emit('testCompleted', testResult);
-    this.currentTest = null;
-
-    return testResult;
-  }
-
-  getQueueStatus() {
-    return {
-      queueLength: this.testQueue.length,
-      isRunning: this.isRunning,
-      currentTest: this.currentTest
-    };
-  }
-
-  clearQueue() {
-    this.testQueue = [];
-    this.emit('queueUpdated', { queueLength: 0 });
-  }
-
-  // New method for v2.0 - run test with full test object including seek testing
-  async runTestV2(testObj) {
-    const startTime = Date.now();
+    let playSessionId = null;
+    let deviceIdForPlayback = null;
     let testResult = {
       testRunId: testObj.testRunId,
       itemId: testObj.itemId,
       itemName: testObj.itemName || '',
       path: testObj.path || '',
       deviceId: testObj.deviceId,
-      format: '',
+      format: testObj.container || '',
       duration: 0,
-      seekTested: false,
-      seekSuccess: false,
       errors: [],
       success: false
     };
@@ -307,33 +292,31 @@ class TestRunner extends EventEmitter {
     this.emit('testStarted', testResult);
 
     try {
-      // Always fetch item info for format/path details
-      const item = await this.jellyfinClient.getItem(testObj.itemId);
-      
-      if (item) {
-        // Use pre-formatted itemName from testObj if available, otherwise format here
-        if (!testObj.itemName) {
-          // Format TV episodes as "Series Name S01E02 - Episode Name"
-          if (item.Type === 'Episode' && item.SeriesName) {
-            const season = item.ParentIndexNumber ? `S${item.ParentIndexNumber}` : '';
-            const episode = item.IndexNumber ? `E${item.IndexNumber}` : '';
-            const episodeNum = season || episode ? ` ${season}${episode}` : '';
-            testResult.itemName = `${item.SeriesName}${episodeNum} - ${item.Name}`;
-          } else {
-            testResult.itemName = item.Name;
+      // Use item info already on the test object when available (avoids a redundant API call)
+      if (!testResult.itemName || !testResult.format) {
+        const item = await this.jellyfinClient.getItem(testObj.itemId);
+
+        if (item) {
+          if (!testResult.itemName) {
+            if (item.Type === 'Episode' && item.SeriesName) {
+              const season = item.ParentIndexNumber ? `S${item.ParentIndexNumber}` : '';
+              const episode = item.IndexNumber ? `E${item.IndexNumber}` : '';
+              const episodeNum = season || episode ? ` ${season}${episode}` : '';
+              testResult.itemName = `${item.SeriesName}${episodeNum} - ${item.Name}`;
+            } else {
+              testResult.itemName = item.Name;
+            }
           }
+
+          if (!testResult.path) testResult.path = item.Path || '';
+          if (!testResult.format) testResult.format = item.Container || '';
+        } else {
+          testResult.format = testObj.path ? testObj.path.split('.').pop() : '';
         }
-        // else: keep the pre-formatted testObj.itemName from testResult initialization
-        
-        testResult.path = item.Path || '';
-        testResult.format = item.Container || '';
-      } else {
-        testResult.format = testObj.path ? testObj.path.split('.').pop() : '';
       }
 
       this.emit('testProgress', { ...testResult, stage: 'Starting playback session' });
 
-      // Use device config from test object
       const playbackInfo = await this.jellyfinClient.startPlaybackSession(
         testObj.itemId,
         testObj.deviceConfig.deviceId || `jellyprobe-${testObj.deviceId}`,
@@ -351,12 +334,12 @@ class TestRunner extends EventEmitter {
       }
 
       const mediaSource = playbackInfo.MediaSources[0];
-      const playSessionId = playbackInfo.PlaySessionId || mediaSource.Id;
+      playSessionId = playbackInfo.PlaySessionId || mediaSource.Id;
+      deviceIdForPlayback = testObj.deviceConfig.deviceId || `jellyprobe-${testObj.deviceId}`;
       const ticksPerSecond = 10000000;
 
       const testDuration = testObj.testConfig.duration || 30;
 
-      // Get streaming URL for actual video download
       const streamUrl = this.jellyfinClient.getStreamUrl(
         testObj.itemId,
         mediaSource.Id,
@@ -384,36 +367,69 @@ class TestRunner extends EventEmitter {
         format: testResult.format || 'mp4'
       });
 
-      this.emit('testProgress', { 
-        ...testResult, 
-        stage: `Testing HLS playback for ${testDuration}s` 
+      // Report playback started so session appears on Jellyfin dashboard (fire-and-forget)
+      this.jellyfinClient.reportPlaybackStarted(
+        testObj.itemId, playSessionId, mediaSource.Id, deviceIdForPlayback
+      );
+
+      console.log(`[TestRunner] Running test: itemId=${testObj.itemId}, testDuration=${testDuration}, testConfig=${JSON.stringify(testObj.testConfig)}`);
+
+      this.emit('testProgress', {
+        ...testResult,
+        stage: `Testing HLS playback for ${testDuration}s`
       });
 
+      // Periodic progress reporting so Jellyfin keeps the session visible
+      let progressElapsed = 0;
+      const progressInterval = setInterval(() => {
+        progressElapsed += 5;
+        this.jellyfinClient.reportPlaybackProgress(
+          testObj.itemId, playSessionId,
+          progressElapsed * ticksPerSecond, deviceIdForPlayback
+        );
+      }, 5000);
+
       // Download HLS stream segments to trigger and validate transcoding
-      const hlsResult = await this.jellyfinClient.downloadHlsStream(
-        streamUrl,
-        testDuration
-      );
+      let hlsResult;
+      try {
+        hlsResult = await this.jellyfinClient.downloadHlsStream(
+          streamUrl,
+          testDuration,
+          (progress) => {
+            this.emit('bandwidthUpdate', {
+              testRunId: testObj.testRunId,
+              deviceId: testObj.deviceId,
+              itemId: testObj.itemId,
+              bytesThisSecond: progress.bytesThisSecond,
+              totalBytes: progress.totalBytes,
+              elapsedSeconds: progress.elapsedSeconds
+            });
+          },
+          { signal: abortController.signal }
+        );
+      } finally {
+        clearInterval(progressInterval);
+      }
 
       if (!hlsResult.success) {
         throw new Error(`HLS stream failed: ${hlsResult.error}`);
       }
 
       testResult.bytesDownloaded = hlsResult.bytesDownloaded;
-      testResult.seekTested = false;
-      testResult.seekSuccess = false;
-      this.emit('testProgress', { 
-        ...testResult, 
-        stage: `Downloaded ${(hlsResult.bytesDownloaded / 1024 / 1024).toFixed(2)} MB (${hlsResult.segmentsDownloaded} segments)` 
+      this.emit('testProgress', {
+        ...testResult,
+        stage: `Downloaded ${(hlsResult.bytesDownloaded / 1024 / 1024).toFixed(2)} MB (${hlsResult.segmentsDownloaded} segments)`
       });
 
-      // Stop playback
+      // Notify frontend to tear down preview before stopping the transcode
+      this.emit('testStreamEnding', { testRunId: testObj.testRunId, itemId: testObj.itemId, deviceId: testObj.deviceId });
+
       const finalPositionTicks = testDuration * ticksPerSecond;
       await this.jellyfinClient.stopPlayback(
         testObj.itemId,
         playSessionId,
         finalPositionTicks,
-        testObj.deviceConfig.deviceId || `jellyprobe-${testObj.deviceId}`
+        deviceIdForPlayback
       );
 
       testResult.success = true;
@@ -425,18 +441,55 @@ class TestRunner extends EventEmitter {
       testResult.errors.push(error.message);
       testResult.success = false;
       testResult.duration = Math.floor((Date.now() - startTime) / 1000);
-      
-      this.emit('testProgress', { 
-        ...testResult, 
-        stage: `Test failed: ${error.message}` 
+
+      // Notify frontend to tear down preview before stopping the transcode
+      if (playSessionId) {
+        this.emit('testStreamEnding', { testRunId: testObj.testRunId, itemId: testObj.itemId, deviceId: testObj.deviceId });
+      }
+
+      if (playSessionId) {
+        try {
+          await this.jellyfinClient.stopPlayback(
+            testObj.itemId,
+            playSessionId,
+            0,
+            deviceIdForPlayback
+          );
+        } catch (_e) {
+          // Best-effort cleanup
+        }
+      }
+
+      this.emit('testProgress', {
+        ...testResult,
+        stage: `Test failed: ${error.message}`
       });
+    } finally {
+      this._abortControllers.delete(abortController);
     }
 
-    this.db.addTestResult(testResult);
+    try {
+      this.db.addTestResult(testResult);
+    } catch (dbErr) {
+      console.error('[TestRunner] Failed to save test result:', dbErr.message);
+    }
     this.emit('testCompleted', testResult);
 
     return testResult;
   }
+
+  getQueueStatus() {
+    return {
+      queueLength: this.testQueue.length,
+      isRunning: this.isRunning
+    };
+  }
+
+  clearQueue() {
+    this.testQueue = [];
+    this.emit('queueUpdated', { queueLength: 0 });
+  }
+
 }
 
 module.exports = TestRunner;

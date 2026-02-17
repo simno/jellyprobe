@@ -1,5 +1,3 @@
-/* utils.js — Formatting helpers */
- 
 const Utils = {
   formatBitrate(bps) {
     if (!bps) return '0 Mbps';

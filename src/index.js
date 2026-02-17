@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const path = require('path');
 const http = require('http');
+const axios = require('axios');
 const WebSocket = require('ws');
 const DatabaseManager = require('./db/schema');
 const JellyfinClient = require('./api/jellyfin');
@@ -18,12 +19,12 @@ const PORT = process.env.PORT || 3000;
 const DATA_PATH = process.env.DATA_PATH || path.join(__dirname, '../data');
 const APP_VERSION = require('../package.json').version;
 
-// Security headers
 app.use((_req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'SAMEORIGIN');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' https://unpkg.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ws: wss:; media-src 'self' blob:");
   next();
 });
 
@@ -33,14 +34,14 @@ const ALLOWED_PROXY_PREFIXES = ['/Videos/', '/Audio/'];
 
 app.use('/jf', async (req, res) => {
   try {
-    // SSRF protection: only allow media-related Jellyfin paths
-    const decodedPath = decodeURIComponent(req.url.split('?')[0]);
-    if (!ALLOWED_PROXY_PREFIXES.some(p => decodedPath.startsWith(p))) {
+    // SSRF protection: normalize the path to prevent double-encoding and traversal bypasses
+    const parsedPath = new URL(req.url, 'http://localhost').pathname;
+    const normalizedPath = path.posix.normalize(parsedPath);
+    if (!ALLOWED_PROXY_PREFIXES.some(p => normalizedPath.startsWith(p))) {
       return res.status(403).json({ error: 'Forbidden proxy path' });
     }
 
     const targetUrl = `${jellyfinClient.baseUrl}${req.url}`;
-    const axios = require('axios');
     const upstream = await axios.get(targetUrl, {
       responseType: 'arraybuffer',
       timeout: 30000,
@@ -79,20 +80,17 @@ db.initialize();
 const config = db.getConfig();
 const jellyfinClient = new JellyfinClient(config?.jellyfinUrl, config?.apiKey);
 const testRunner = new TestRunner(jellyfinClient, db);
-const scanner = new LibraryScanner(jellyfinClient, db, testRunner);
+const scanner = new LibraryScanner(jellyfinClient, db);
 const testRunManager = new TestRunManager(db, testRunner, jellyfinClient);
 const scheduler = new Scheduler(db, jellyfinClient, testRunManager);
 
-// Check if we have libraries configured (new format or old)
 const libraryIds = config?.scanLibraryIds ? JSON.parse(config.scanLibraryIds) : [];
 if (config?.jellyfinUrl && config?.apiKey && libraryIds.length > 0) {
   scanner.start();
 }
 
-// Always start the scheduler (it checks its own schedules)
 scheduler.start();
 
-// Set max parallel tests from config
 if (config?.maxParallelTests) {
   testRunner.setMaxParallelTests(config.maxParallelTests);
 }
@@ -120,18 +118,29 @@ testRunner.on('testStarted', (data) => broadcast('testStarted', data));
 testRunner.on('testProgress', (data) => broadcast('testProgress', data));
 testRunner.on('testStreamReady', (data) => broadcast('testStreamReady', data));
 testRunner.on('testCompleted', (data) => {
-  broadcast('testCompleted', data);
-  // Update test run progress if this is part of a test run
-  if (data.testRunId) {
-    testRunManager.onTestComplete(data);
+  // Update test run progress if this is part of a test run — do this before broadcasting
+  try {
+    if (data.testRunId) {
+      testRunManager.onTestComplete(data);
+    }
+  } catch (err) {
+    console.error('Error updating test run progress:', err);
+  }
+
+  // Broadcast the completion to connected clients; guard against broadcast errors so they don't affect server-side state
+  try {
+    broadcast('testCompleted', data);
+  } catch (err) {
+    console.error('Failed to broadcast testCompleted event:', err);
   }
 });
+testRunner.on('testStreamEnding', (data) => broadcast('testStreamEnding', data));
+testRunner.on('bandwidthUpdate', (data) => broadcast('bandwidthUpdate', data));
 testRunner.on('queueUpdated', (data) => broadcast('queueUpdated', data));
 scanner.on('scanStarted', () => broadcast('scanStarted', {}));
 scanner.on('scanCompleted', (data) => broadcast('scanCompleted', data));
 scanner.on('scanError', (error) => broadcast('scanError', { error: error.message }));
 
-// Test Run Manager events
 testRunManager.on('testRunCreated', (data) => broadcast('testRunCreated', data));
 testRunManager.on('testRunStarted', (data) => broadcast('testRunStarted', data));
 testRunManager.on('testRunPaused', (data) => broadcast('testRunPaused', data));
@@ -186,7 +195,6 @@ app.post('/api/config/test', async (req, res) => {
     if (!jellyfinUrl || !apiKey) {
       return res.status(400).json({ success: false, error: 'URL and API key are required' });
     }
-    // Basic URL validation
     try { new URL(jellyfinUrl); } catch (_e) {
       return res.status(400).json({ success: false, error: 'Invalid URL format' });
     }
@@ -380,31 +388,42 @@ app.get('/api/scan/status', (req, res) => {
   }
 });
 
-// Test Run API endpoints
 app.post('/api/test-runs', (req, res) => {
   try {
     const { devices, mediaItems, mediaScope, testConfig, totalTests } = req.body;
-    
+
+    console.log(`[API] POST /api/test-runs: received mediaScope=${JSON.stringify(mediaScope)}, testConfig=${JSON.stringify(testConfig)}, mediaItems=${Array.isArray(mediaItems) ? mediaItems.length : 'undefined'}`);
+
     if (!devices || !Array.isArray(devices) || devices.length === 0) {
       return res.status(400).json({ error: 'At least one device is required' });
     }
-    
-    // Support both legacy mediaItems and new mediaScope
+
     if ((!mediaItems || !Array.isArray(mediaItems) || mediaItems.length === 0) && !mediaScope) {
       return res.status(400).json({ error: 'At least one media item or a media scope is required' });
     }
-    
+
     const devicesCount = Array.isArray(devices) ? devices.length : 0;
     const mediaCount = Array.isArray(mediaItems) ? mediaItems.length : 0;
-    
+
+    let computedTotalTests;
+    if (typeof totalTests === 'number' && Number.isFinite(totalTests)) {
+      computedTotalTests = totalTests;
+    } else if (mediaCount > 0) {
+      computedTotalTests = devicesCount * mediaCount;
+    } else {
+      computedTotalTests = undefined;
+    }
+
     const config = {
       devices,
       mediaItems,
       mediaScope,
       testConfig,
-      totalTests: totalTests || (devicesCount * mediaCount)
+      totalTests: computedTotalTests
     };
-    
+
+    console.log(`[API] Creating test run with config keys: ${Object.keys(config).join(', ')}`);
+
     const testRun = testRunManager.createTestRun(config);
     res.json({ success: true, testRun });
   } catch (_error) {
@@ -561,7 +580,7 @@ app.post('/api/schedules/:id/run', async (req, res) => {
     if (isNaN(id)) return res.status(400).json({ error: 'Invalid schedule ID' });
     const schedule = db.getScheduledRun(id);
     if (!schedule) return res.status(404).json({ error: 'Schedule not found' });
-    await scheduler._executeSchedule(schedule);
+    await scheduler.executeSchedule(schedule);
     res.json({ success: true });
   } catch (_error) {
     res.status(500).json({ error: 'Failed to run schedule' });
@@ -600,7 +619,6 @@ app.get('/api/stream/:itemId', async (req, res) => {
       maxHeight: Math.min(parseInt(maxHeight) || 1080, 2160)
     });
 
-    const axios = require('axios');
     const upstream = await axios.get(masterUrl, {
       timeout: 30000,
       headers: { 'X-Emby-Token': jellyfinClient.apiKey }
@@ -638,16 +656,35 @@ app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, '../public/index.html'));
 });
 
-process.on('SIGTERM', () => {
-  console.log('SIGTERM received, shutting down gracefully...');
+let isShuttingDown = false;
+
+async function gracefulShutdown(signal) {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+  console.log(`${signal} received, shutting down gracefully...`);
+
+  // 1. Stop accepting new work and await in-flight test cleanup (including stopPlayback calls)
+  await testRunner.stop();
   scheduler.stop();
   scanner.stop();
-  db.close();
+
+  // 2. Close HTTP server (stops new connections), then close DB last
   server.close(() => {
     console.log('Server closed');
+    db.close();
     process.exit(0);
   });
-});
+
+  // Force exit if server.close hangs
+  setTimeout(() => {
+    console.error('Shutdown timed out, forcing exit');
+    db.close();
+    process.exit(1);
+  }, 10000);
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 server.listen(PORT, () => {
   console.log(`JellyProbe server running on port ${PORT}`);

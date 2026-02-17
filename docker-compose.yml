@@ -8,9 +8,9 @@ services:
     volumes:
       - ./data:/data
     environment:
+      - TZ=${TZ:-UTC}
       - JELLYFIN_URL=${JELLYFIN_URL:-http://localhost:8096}
       - API_KEY=${API_KEY:-}
-      - SCAN_LIBRARY_ID=${SCAN_LIBRARY_ID:-}
       - ENCRYPTION_KEY=${ENCRYPTION_KEY:-}
       - PORT=3000
       - DATA_PATH=/data

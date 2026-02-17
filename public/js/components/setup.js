@@ -1,5 +1,3 @@
-/* setup.js — First-run connection setup */
- 
 const SetupPage = {
   _libraries: [],
 

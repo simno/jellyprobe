@@ -1,4 +1,3 @@
-/* app.js — Main entry point */
 const JellyProbe = {
   async init() {
     try {

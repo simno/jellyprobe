@@ -1,7 +1,11 @@
-/* dashboard.js — Live test run dashboard with video preview */
- 
+/* global Chart */
+
 const DashboardPage = {
   _pollTimer: null,
+  _bwChart: null,
+  _bwTotalBytes: 0,
+  _pieChart: null,
+  _wsHandlers: [],
 
   render() {
     return `
@@ -29,6 +33,11 @@ const DashboardPage = {
         <div id="previewSection">
           <div class="section-title mb-16"><i data-lucide="monitor-play"></i> Live Preview</div>
           <div class="preview-grid" id="previewGrid" data-cols="2"></div>
+        </div>
+
+        <div id="bwChartSection">
+          <div class="section-title mb-12"><i data-lucide="activity"></i> Bandwidth</div>
+          <div class="bw-chart-wrap"><canvas id="bwChart"></canvas></div>
         </div>
 
         <div class="section-title mb-12"><i data-lucide="terminal"></i> Log</div>
@@ -93,79 +102,127 @@ const DashboardPage = {
       this._showCompletedView(run);
     } else {
       this._initPreviewSlots(run);
+      this._initBwChart();
       this._loadResults(run.id);
+      this._startPolling(run.id);
     }
 
     if (typeof lucide !== 'undefined') lucide.createIcons();
   },
 
+  _wsOn(event, fn) {
+    WS.on(event, fn);
+    this._wsHandlers.push({ event, fn });
+  },
+
+  _teardownWS() {
+    for (const { event, fn } of this._wsHandlers) WS.off(event, fn);
+    this._wsHandlers = [];
+  },
+
   _setupWS() {
-    WS.on('testRunProgress', (d) => {
-      const run = Store.get('currentTestRun');
-      if (!run || d.id !== run.id) return;
-      run.completedTests = d.completed;
-      run.successfulTests = d.successful;
-      run.failedTests = d.failed;
-      Store.set('currentTestRun', run);
-      this._updateUI(run);
+    // Clean up any stale handlers from a previous dashboard visit
+    this._teardownWS();
+
+    // Capture the run ID at setup time so handlers always match
+    const run = Store.get('currentTestRun');
+    const runId = run?.id;
+
+    this._wsOn('testRunStarted', (d) => {
+      if (d.id !== runId) return;
+      const r = Store.get('currentTestRun');
+      if (!r) return;
+      r.status = 'running';
+      Store.set('currentTestRun', r);
+      this._updateUI(r);
     });
 
-    WS.on('testRunCompleted', (d) => {
-      const run = Store.get('currentTestRun');
-      if (!run || d.id !== run.id) return;
-      run.status = 'completed';
-      Store.set('currentTestRun', run);
-      this._updateUI(run);
+    this._wsOn('testRunProgress', (d) => {
+      if (d.id !== runId) return;
+      const r = Store.get('currentTestRun');
+      if (!r) return;
+      r.completedTests = d.completed;
+      r.successfulTests = d.successful;
+      r.failedTests = d.failed;
+      if (d.total) r.totalTests = d.total;
+      Store.set('currentTestRun', r);
+      this._updateUI(r);
+    });
+
+    this._wsOn('testRunCompleted', (d) => {
+      if (d.id !== runId) return;
+      const r = Store.get('currentTestRun');
+      if (!r) return;
+      r.status = 'completed';
+      Store.set('currentTestRun', r);
+      this._updateUI(r);
+      this._stopPolling();
       this._clearPreviews();
-      this._showCompletedView(run);
+      this._destroyBwChart();
+      this._showCompletedView(r);
     });
 
-    WS.on('testRunPaused', (d) => {
-      const run = Store.get('currentTestRun');
-      if (!run || d.id !== run.id) return;
-      run.status = 'paused';
-      Store.set('currentTestRun', run);
-      this._updateUI(run);
+    this._wsOn('testRunPaused', (d) => {
+      if (d.id !== runId) return;
+      const r = Store.get('currentTestRun');
+      if (!r) return;
+      r.status = 'paused';
+      Store.set('currentTestRun', r);
+      this._updateUI(r);
       this._addLog('Test run paused', '');
     });
 
-    WS.on('testRunResumed', (d) => {
-      const run = Store.get('currentTestRun');
-      if (!run || d.id !== run.id) return;
-      run.status = 'running';
-      Store.set('currentTestRun', run);
-      this._updateUI(run);
+    this._wsOn('testRunResumed', (d) => {
+      if (d.id !== runId) return;
+      const r = Store.get('currentTestRun');
+      if (!r) return;
+      r.status = 'running';
+      Store.set('currentTestRun', r);
+      this._updateUI(r);
       this._addLog('Test run resumed', '');
     });
 
-    WS.on('testRunCancelled', (d) => {
-      const run = Store.get('currentTestRun');
-      if (!run || d.id !== run.id) return;
-      run.status = 'cancelled';
-      Store.set('currentTestRun', run);
-      this._updateUI(run);
+    this._wsOn('testRunCancelled', (d) => {
+      if (d.id !== runId) return;
+      const r = Store.get('currentTestRun');
+      if (!r) return;
+      r.status = 'cancelled';
+      Store.set('currentTestRun', r);
+      this._updateUI(r);
+      this._stopPolling();
       this._clearPreviews();
-      this._showCompletedView(run);
+      this._destroyBwChart();
+      this._showCompletedView(r);
     });
 
-    WS.on('testCompleted', (d) => {
-      const run = Store.get('currentTestRun');
-      if (!run || d.testRunId !== run.id) return;
+    this._wsOn('testCompleted', (d) => {
+      if (d.testRunId !== runId) return;
       const status = d.success ? 'success' : 'error';
       this._addLog(`${d.itemName || 'Unknown'} — ${d.success ? 'passed' : 'FAILED'}`, status);
-      this._loadResults(run.id);
+      this._loadResults(runId);
       this._removePreview(d.itemId, d.deviceId);
     });
 
-    WS.on('testProgress', (d) => {
+    this._wsOn('testProgress', (d) => {
+      if (d.testRunId && d.testRunId !== runId) return;
       if (d.stage) this._addLog(`${d.itemName || ''}: ${d.stage}`, '');
     });
 
-    WS.on('testStreamReady', (d) => {
-      const run = Store.get('currentTestRun');
+    this._wsOn('testStreamEnding', (d) => {
+      if (d.testRunId !== runId) return;
+      this._removePreview(d.itemId, d.deviceId);
+    });
+
+    this._wsOn('testStreamReady', (d) => {
+      if (d.testRunId !== runId) return;
       const config = Store.get('config');
-      if (!run || d.testRunId !== run.id || config?.showPreviews === 0) return;
+      if (config?.showPreviews === 0) return;
       this._addPreview(d);
+    });
+
+    this._wsOn('bandwidthUpdate', (d) => {
+      if (d.testRunId !== runId) return;
+      this._onBandwidthUpdate(d);
     });
   },
 
@@ -178,20 +235,17 @@ const DashboardPage = {
     const badges = { running: 'badge-info', paused: 'badge-warning', completed: 'badge-success', cancelled: 'badge-danger', pending: 'badge-neutral' };
     if (status) status.innerHTML = `<span class="badge ${badges[run.status] || 'badge-neutral'}">${run.status}</span>`;
 
-    // Stats
     const el = (id) => document.getElementById(id);
     if (el('sTotal')) el('sTotal').textContent = run.totalTests || 0;
     if (el('sCompleted')) el('sCompleted').textContent = run.completedTests || 0;
     if (el('sPassed')) el('sPassed').textContent = run.successfulTests || 0;
     if (el('sFailed')) el('sFailed').textContent = run.failedTests || 0;
 
-    // Progress
     const pct = run.totalTests > 0 ? Math.round((run.completedTests / run.totalTests) * 100) : 0;
     if (el('progFill')) el('progFill').style.width = pct + '%';
     if (el('progPct')) el('progPct').textContent = pct + '%';
     if (el('progEta')) el('progEta').textContent = `${run.completedTests || 0} / ${run.totalTests || 0}`;
 
-    // Actions
     const isActive = run.status === 'running' || run.status === 'paused';
     if (actions) {
       actions.innerHTML = '';
@@ -218,6 +272,41 @@ const DashboardPage = {
         try { await Api.cancelTestRun(run.id); } catch (e) { Utils.toast(e.message, 'error'); }
       });
     }
+  },
+
+  /* --- Polling fallback (in case WS events are lost) --- */
+  _startPolling(runId) {
+    if (this._pollTimer) clearInterval(this._pollTimer);
+    this._pollTimer = setInterval(async () => {
+      try {
+        const fresh = await Api.getTestRun(runId);
+        if (!fresh) return;
+        const r = Store.get('currentTestRun');
+        if (!r || r.id !== runId) return;
+        const changed = r.completedTests !== fresh.completedTests
+          || r.status !== fresh.status
+          || r.totalTests !== fresh.totalTests;
+        if (!changed) return;
+        r.completedTests = fresh.completedTests;
+        r.successfulTests = fresh.successfulTests;
+        r.failedTests = fresh.failedTests;
+        r.totalTests = fresh.totalTests;
+        r.status = fresh.status;
+        Store.set('currentTestRun', r);
+        this._updateUI(r);
+        this._loadResults(runId);
+        if (fresh.status === 'completed' || fresh.status === 'cancelled') {
+          this._stopPolling();
+          this._clearPreviews();
+          this._destroyBwChart();
+          this._showCompletedView(r);
+        }
+      } catch (_e) { /* ignore poll errors */ }
+    }, 3000);
+  },
+
+  _stopPolling() {
+    if (this._pollTimer) { clearInterval(this._pollTimer); this._pollTimer = null; }
   },
 
   /* --- Live Preview --- */
@@ -254,7 +343,8 @@ const DashboardPage = {
     // No idle slot — add a new one if under max
     if (!slot) {
       const count = grid.querySelectorAll('.preview-cell').length;
-      const maxSlots = this._maxPreviewSlots();
+      const config2 = Store.get('config');
+      const maxSlots = Math.min(this._maxPreviewSlots(), config2?.maxParallelTests || 2);
       if (count >= maxSlots) return;
       const cell = document.createElement('div');
       cell.className = 'preview-cell';
@@ -396,6 +486,72 @@ const DashboardPage = {
     } catch (_e) {/* */}
   },
 
+  /* --- Bandwidth Chart --- */
+  _initBwChart() {
+    if (typeof Chart === 'undefined') return;
+    const canvas = document.getElementById('bwChart');
+    if (!canvas) return;
+    this._bwTotalBytes = 0;
+    this._bwStartTime = Date.now();
+    this._bwSecondBuckets = {};
+    this._bwChart = new Chart(canvas, {
+      type: 'line',
+      data: {
+        labels: [],
+        datasets: [{
+          label: 'MB/s',
+          data: [],
+          borderColor: '#818cf8',
+          backgroundColor: 'rgba(129,140,248,0.1)',
+          fill: true,
+          tension: 0.3,
+          pointRadius: 0,
+          borderWidth: 2
+        }]
+      },
+      options: {
+        animation: false,
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          x: { title: { display: true, text: 'Seconds', color: '#64748b' }, ticks: { color: '#64748b', maxTicksLimit: 20 }, grid: { color: 'rgba(148,163,184,0.08)' } },
+          y: { title: { display: true, text: 'MB/s', color: '#64748b' }, ticks: { color: '#64748b' }, grid: { color: 'rgba(148,163,184,0.08)' }, beginAtZero: true }
+        },
+        plugins: { legend: { display: false } }
+      }
+    });
+  },
+
+  _onBandwidthUpdate(d) {
+    if (!this._bwChart) return;
+    // Use wall-clock time relative to chart start, not per-test elapsed time
+    const sec = Math.floor((Date.now() - this._bwStartTime) / 1000);
+    if (!this._bwSecondBuckets[sec]) this._bwSecondBuckets[sec] = 0;
+    this._bwSecondBuckets[sec] += d.bytesThisSecond;
+    this._bwTotalBytes += d.bytesThisSecond;
+
+    const maxSec = Math.max(...Object.keys(this._bwSecondBuckets).map(Number));
+    const labels = [];
+    const data = [];
+    for (let s = 0; s <= maxSec; s++) {
+      labels.push(s);
+      data.push(((this._bwSecondBuckets[s] || 0) / (1024 * 1024)).toFixed(2));
+    }
+    this._bwChart.data.labels = labels;
+    this._bwChart.data.datasets[0].data = data;
+    this._bwChart.update('none');
+  },
+
+  _destroyBwChart() {
+    if (this._bwChart) { this._bwChart.destroy(); this._bwChart = null; }
+  },
+
+  _destroyPieChart() {
+    if (this._pieChart) { this._pieChart.destroy(); this._pieChart = null; }
+    const pieTooltip = document.getElementById('pie-tooltip');
+    if (pieTooltip) pieTooltip.remove();
+  },
+
   /* --- Completed View --- */
   async _showCompletedView(run) {
     const liveSection = document.getElementById('liveSection');
@@ -408,14 +564,51 @@ const DashboardPage = {
     completedSection.innerHTML = '<div class="spinner"></div>';
 
     try {
+      this._destroyPieChart();
       const results = await Api.getTestRunResults(run.id);
       if (!results || results.length === 0) {
         completedSection.innerHTML = '<div class="empty-state"><p>No results recorded.</p></div>';
         return;
       }
 
-      const showPassed = Store.get('showPassed') || false;
+      const totalBytes = results.reduce((sum, r) => sum + (r.bytesDownloaded || 0), 0);
+      const passRate = results.length > 0 ? Math.round((results.filter(r => r.success).length / results.length) * 100) : 0;
+      const avgDuration = results.length > 0 ? Math.round(results.reduce((sum, r) => sum + (r.duration || 0), 0) / results.length) : 0;
+
+      const formatBytes = (bytes) => {
+        if (bytes >= 1073741824) return (bytes / 1073741824).toFixed(2) + ' GB';
+        if (bytes >= 1048576) return (bytes / 1048576).toFixed(1) + ' MB';
+        if (bytes >= 1024) return (bytes / 1024).toFixed(0) + ' KB';
+        return bytes + ' B';
+      };
+
+      const deviceBytes = {};
+      const deviceNames = {};
+      for (const r of results) {
+        const devName = r.deviceName || `Device #${r.deviceId}`;
+        deviceNames[r.deviceId] = devName;
+        deviceBytes[r.deviceId] = (deviceBytes[r.deviceId] || 0) + (r.bytesDownloaded || 0);
+      }
+      const deviceIds = Object.keys(deviceBytes);
+      const showPie = deviceIds.length > 1 && totalBytes > 0;
+
+      const runTime = (run.startedAt && run.completedAt)
+        ? Utils.formatDuration(Math.round((new Date(run.completedAt) - new Date(run.startedAt)) / 1000))
+        : null;
+
       let html = `
+        <div class="section-title mb-12"><i data-lucide="bar-chart-3"></i> Summary</div>
+        <div class="bw-summary-row">
+          <div class="stat-card accent"><div class="stat-label">Total Data</div><div class="stat-value" style="font-size:1.5rem">${formatBytes(totalBytes)}</div></div>
+          <div class="stat-card success"><div class="stat-label">Pass Rate</div><div class="stat-value" style="font-size:1.5rem">${passRate}%</div></div>
+          <div class="stat-card"><div class="stat-label">Avg Duration</div><div class="stat-value" style="font-size:1.5rem">${avgDuration}s</div></div>
+          ${runTime ? `<div class="stat-card"><div class="stat-label">Run Time</div><div class="stat-value" style="font-size:1.5rem">${runTime}</div></div>` : ''}
+          ${showPie ? '<div class="stat-card bw-pie-inline"><div class="stat-label">Per Profile</div><div class="bw-pie-content"><canvas id="bwPieChart" width="80" height="80"></canvas><div class="bw-legend" id="bwPieLegend"></div></div></div>' : ''}
+        </div>
+      `;
+
+      const showPassed = Store.get('showPassed') || false;
+      html += `
         <div class="flex align-center gap-12 mb-12">
           <div class="section-title" style="margin-bottom:0"><i data-lucide="table-2"></i> Results</div>
           <label class="toggle-check ml-auto">
@@ -426,6 +619,65 @@ const DashboardPage = {
       `;
       html += DashboardPage._buildResultsMatrix(results);
       completedSection.innerHTML = html;
+
+      if (showPie && typeof Chart !== 'undefined') {
+        const pieCanvas = document.getElementById('bwPieChart');
+        const legend = document.getElementById('bwPieLegend');
+        const colors = ['#818cf8', '#4ade80', '#fbbf24', '#f87171', '#38bdf8', '#a78bfa', '#fb923c', '#34d399'];
+        if (pieCanvas) {
+          this._pieChart = new Chart(pieCanvas, {
+            type: 'doughnut',
+            data: {
+              labels: deviceIds.map(id => deviceNames[id]),
+              datasets: [{
+                data: deviceIds.map(id => deviceBytes[id]),
+                backgroundColor: deviceIds.map((_, i) => colors[i % colors.length]),
+                borderWidth: 0
+              }]
+            },
+            options: {
+              animation: false,
+              responsive: false,
+              plugins: {
+                legend: { display: false },
+                tooltip: {
+                  enabled: false,
+                  external: (ctx) => {
+                    let el = document.getElementById('pie-tooltip');
+                    if (!el) {
+                      el = document.createElement('div');
+                      el.id = 'pie-tooltip';
+                      el.style.cssText = 'position:fixed;pointer-events:none;background:var(--bg-card);border:1px solid var(--border-subtle);border-radius:6px;padding:6px 10px;font-size:.78rem;color:var(--text-1);z-index:9999;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,.25);transition:opacity .15s';
+                      document.body.appendChild(el);
+                    }
+                    const tooltip = ctx.tooltip;
+                    if (tooltip.opacity === 0) { el.style.opacity = '0'; return; }
+                    const i = tooltip.dataPoints?.[0]?.dataIndex;
+                    if (i != null) {
+                      const name = Utils.escapeHtml(deviceIds.map(id => deviceNames[id])[i]);
+                      const bytes = formatBytes(deviceIds.map(id => deviceBytes[id])[i]);
+                      el.innerHTML = `<strong>${name}</strong>: ${bytes}`;
+                    }
+                    const rect = pieCanvas.getBoundingClientRect();
+                    el.style.opacity = '1';
+                    el.style.left = (rect.left + tooltip.caretX) + 'px';
+                    el.style.top = (rect.top + tooltip.caretY - 36) + 'px';
+                  }
+                }
+              }
+            }
+          });
+          if (legend) {
+            legend.innerHTML = deviceIds.map((id, i) => `
+              <div class="bw-legend-row">
+                <span class="bw-legend-swatch" style="background:${colors[i % colors.length]}"></span>
+                <span>${Utils.escapeHtml(deviceNames[id])}</span>
+                <span style="margin-left:auto;color:var(--text-1);font-weight:600">${formatBytes(deviceBytes[id])}</span>
+              </div>
+            `).join('');
+          }
+        }
+      }
 
       const checkCompleted = document.getElementById('showPassedCheckCompleted');
       if (checkCompleted) {
@@ -442,7 +694,6 @@ const DashboardPage = {
   },
 
   _buildResultsMatrix(results) {
-    // Group results by media item, preserving insertion order
     const mediaMap = new Map();
     const deviceSet = new Map();
 
@@ -459,7 +710,6 @@ const DashboardPage = {
     const deviceNames = [...deviceSet.values()];
     const showPassed = Store.get('showPassed') || false;
 
-    // Summary counts
     const failedItems = [...mediaMap.values()].filter(m =>
       Object.values(m.results).some(r => !r.success)
     ).length;
@@ -517,7 +767,10 @@ const DashboardPage = {
   },
 
   destroy() {
-    if (this._pollTimer) clearInterval(this._pollTimer);
+    this._stopPolling();
+    this._teardownWS();
     this._clearPreviews();
+    this._destroyBwChart();
+    this._destroyPieChart();
   }
 };

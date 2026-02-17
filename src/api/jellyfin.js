@@ -222,22 +222,40 @@ class JellyfinClient {
     }
   }
 
-  async reportPlaybackProgress(itemId, playSessionId, positionTicks, deviceId) {
-    if (!this.client) {
-      return;
+  async reportPlaybackStarted(itemId, playSessionId, mediaSourceId, deviceId) {
+    if (!this.client) return;
+
+    try {
+      await this.client.post('/Sessions/Playing', {
+        ItemId: itemId,
+        PlaySessionId: playSessionId,
+        MediaSourceId: mediaSourceId,
+        CanSeek: false,
+        PlayMethod: 'Transcode',
+        IsPlayback: true,
+        IsPaused: false,
+        PositionTicks: 0
+      }, {
+        headers: { 'X-Emby-Device-Id': deviceId }
+      });
+    } catch (error) {
+      console.error('Failed to report playback started:', error.message);
     }
+  }
+
+  async reportPlaybackProgress(itemId, playSessionId, positionTicks, deviceId) {
+    if (!this.client) return;
 
     try {
       await this.client.post('/Sessions/Playing/Progress', {
         ItemId: itemId,
         PlaySessionId: playSessionId,
         PositionTicks: positionTicks,
-        IsPaused: false,
-        IsMuted: false
+        CanSeek: false,
+        PlayMethod: 'Transcode',
+        IsPaused: false
       }, {
-        headers: {
-          'X-Emby-Device-Id': deviceId
-        }
+        headers: { 'X-Emby-Device-Id': deviceId }
       });
     } catch (error) {
       console.error('Failed to report playback progress:', error.message);
@@ -261,19 +279,6 @@ class JellyfinClient {
       });
     } catch (error) {
       console.error('Failed to stop playback:', error.message);
-    }
-  }
-
-  async getActiveSessions() {
-    if (!this.client) {
-      throw new Error('Jellyfin client not configured');
-    }
-
-    try {
-      const response = await this.client.get('/Sessions');
-      return response.data;
-    } catch (error) {
-      throw new Error(`Failed to get active sessions: ${error.message}`, { cause: error });
     }
   }
 
@@ -306,13 +311,13 @@ class JellyfinClient {
   }
 
   // Download and validate HLS stream to verify transcoding works
-  async downloadHlsStream(masterUrl, durationSeconds = 30) {
+  async downloadHlsStream(masterUrl, durationSeconds = 30, onProgress = null, { signal } = {}) {
     let totalBytes = 0;
     const authHeaders = { 'X-Emby-Token': this.apiKey };
 
     try {
       console.log(`[HLS] Starting stream validation (${durationSeconds}s)`);
-      const masterResp = await axios.get(masterUrl, { timeout: 30000, headers: authHeaders });
+      const masterResp = await axios.get(masterUrl, { timeout: 30000, headers: authHeaders, signal });
       const masterText = masterResp.data;
 
       if (!masterText.includes('#EXTM3U')) {
@@ -329,17 +334,21 @@ class JellyfinClient {
         variantUrl = new URL(variantUrl, masterUrl).toString();
       }
 
+      const WARMUP_TIMEOUT_MS = 60000;
       const startTime = Date.now();
-      const endTime = startTime + (durationSeconds * 1000);
+      // Allow generous warmup for slow transcodes; once the first segment
+      // arrives, reset the deadline to durationSeconds of actual streaming.
+      let endTime = startTime + WARMUP_TIMEOUT_MS;
+      let streamingStarted = false;
       let downloadedSegments = new Set();
       let attempts = 0;
-      const maxAttempts = durationSeconds * 2;
+      const maxAttempts = (durationSeconds + 60) * 2;
 
-      while (Date.now() < endTime && attempts < maxAttempts) {
+      while (Date.now() < endTime && attempts < maxAttempts && !(signal && signal.aborted)) {
         attempts++;
         let variantText;
         try {
-          const variantResp = await axios.get(variantUrl, { timeout: 15000, headers: authHeaders });
+          const variantResp = await axios.get(variantUrl, { timeout: 15000, headers: authHeaders, signal });
           variantText = variantResp.data;
         } catch (_e) {
           await new Promise(r => setTimeout(r, 2000));
@@ -353,15 +362,27 @@ class JellyfinClient {
 
         for (const segUrl of segments) {
           if (downloadedSegments.has(segUrl) || Date.now() >= endTime) continue;
-          downloadedSegments.add(segUrl);
 
           try {
             const segResp = await axios.get(segUrl, {
               responseType: 'arraybuffer',
-              timeout: 15000,
-              headers: authHeaders
+              timeout: 30000,
+              headers: authHeaders,
+              signal
             });
+            downloadedSegments.add(segUrl);
             totalBytes += segResp.data.byteLength;
+
+            if (!streamingStarted) {
+              streamingStarted = true;
+              endTime = Date.now() + (durationSeconds * 1000);
+              console.log(`[HLS] First segment received after ${Math.round((Date.now() - startTime) / 1000)}s warmup`);
+            }
+
+            if (onProgress) {
+              const elapsedSeconds = Math.floor((Date.now() - startTime) / 1000);
+              onProgress({ totalBytes, bytesThisSecond: segResp.data.byteLength, elapsedSeconds });
+            }
           } catch (e) {
             console.error(`[HLS] Segment download failed: ${e.message}`);
           }
@@ -377,7 +398,7 @@ class JellyfinClient {
       }
 
       if (totalBytes === 0) {
-        return { success: false, error: 'No HLS segments downloaded — transcoding may have failed', bytesDownloaded: 0 };
+        return { success: false, error: 'No HLS segments downloaded after 60s — transcoding may have failed or is too slow', bytesDownloaded: 0 };
       }
 
       console.log(`[HLS] Complete: ${downloadedSegments.size} segments, ${totalBytes} bytes`);

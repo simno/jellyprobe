@@ -17,9 +17,9 @@ describe('TestRunner - Advanced', () => {
     mockJellyfinClient = {
       getItem: jest.fn(),
       startPlaybackSession: jest.fn(),
+      reportPlaybackStarted: jest.fn(),
       reportPlaybackProgress: jest.fn(),
       stopPlayback: jest.fn(),
-      getActiveSessions: jest.fn(),
       getStreamUrl: jest.fn(),
       downloadVideoChunk: jest.fn(),
       downloadHlsStream: jest.fn(),

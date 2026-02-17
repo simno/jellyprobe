@@ -1,5 +1,3 @@
-/* wizard.js — 3-step test run wizard */
- 
 const WizardPage = {
   _step: 1,
   _configuredLibs: [],
@@ -39,7 +37,6 @@ const WizardPage = {
     const devices = await Api.getDevices();
     Store.set('devices', devices);
 
-    // Load configured libraries
     const config = Store.get('config');
     const libIds = config?.scanLibraryIds ? JSON.parse(config.scanLibraryIds) : [];
     try {
@@ -47,7 +44,6 @@ const WizardPage = {
       this._configuredLibs = (Array.isArray(allLibs) ? allLibs : [])
         .filter(l => libIds.includes(l.ItemId || l.Id));
       Store.set('libraries', allLibs);
-      // Auto-select all configured libraries
       Store.set('selectedLibraries', [...this._configuredLibs]);
     } catch (_e) { this._configuredLibs = []; }
 
@@ -183,7 +179,6 @@ const WizardPage = {
         </div>
       </div>`;
 
-    // Library toggles
     body.querySelectorAll('.select-card[data-lid]').forEach(el => {
       el.addEventListener('click', () => {
         const id = el.dataset.lid;
@@ -208,7 +203,6 @@ const WizardPage = {
       });
     });
 
-    // Filter tabs
     document.getElementById('filterTabs').addEventListener('click', (e) => {
       const tab = e.target.closest('.filter-tab');
       if (!tab) return;
@@ -222,7 +216,6 @@ const WizardPage = {
       this._loadMediaScope();
     });
 
-    // Date range selector
     const dateRangeEl = document.getElementById('dateRangeDays');
     if (dateRangeEl) {
       const savedDays = Store.get('mediaDays');
@@ -527,7 +520,6 @@ const WizardPage = {
     document.getElementById('revDuration').addEventListener('input', updateEstimate);
     document.getElementById('revParallel').addEventListener('input', updateEstimate);
 
-    // Schedule frequency toggle
     const schedFreq = document.getElementById('schedFreq');
     const schedDayWrap = document.getElementById('schedDayWrap');
     const schedTimeWrap = document.getElementById('schedTimeWrap');
@@ -566,8 +558,12 @@ const WizardPage = {
         estimatedCount = Store.get('allMediaCount');
       } else if (filter === 'recent') {
         const days = Store.get('mediaDays') || 7;
+        const items = Store.get('allMediaItems');
         mediaScope.days = days;
-        estimatedCount = Store.get('allMediaItems').length;
+        // Pin to the exact item IDs the user previewed so the run
+        // tests precisely what was shown, not a re-fetch from Jellyfin
+        mediaScope.itemIds = items.map(m => m.Id);
+        estimatedCount = items.length;
       } else {
         const selected = Store.get('selectedMedia');
         mediaScope.itemIds = selected.map(m => m.Id);
@@ -582,7 +578,6 @@ const WizardPage = {
         return; 
       }
 
-      // Save parallel setting and update local store
       await Api.saveConfig({ maxParallelTests: parallel });
       const updatedConfig = Store.get('config') || {};
       updatedConfig.maxParallelTests = parallel;
@@ -609,14 +604,15 @@ const WizardPage = {
         Store.set('testResults', []);
         Store.set('activeStreams', []);
 
-        // Navigate to dashboard
+        // Navigate to dashboard and scroll to top
         location.hash = '#/dashboard';
+        window.scrollTo(0, 0);
 
-        // Start the run
-        await Api.startTestRun(result.testRun.id);
-        const run = Store.get('currentTestRun');
-        run.status = 'running';
-        Store.set('currentTestRun', run);
+        // Start the run (fire without blocking — server returns immediately)
+        Api.startTestRun(result.testRun.id).then(() => {
+          const run = Store.get('currentTestRun');
+          if (run) { run.status = 'running'; Store.set('currentTestRun', run); }
+        }).catch(() => {});
       }
     } catch (e) {
       Utils.toast('Launch failed: ' + e.message, 'error');

@@ -12,9 +12,7 @@ class Scheduler extends EventEmitter {
 
   start() {
     if (this.timer) return;
-    // Check every 30 seconds for due schedules
     this.timer = setInterval(() => this._tick(), 30000);
-    // Also run immediately
     this._tick();
     console.log('[Scheduler] Started');
   }
@@ -44,7 +42,7 @@ class Scheduler extends EventEmitter {
 
         const nextRun = new Date(schedule.nextRunAt);
         if (now >= nextRun) {
-          await this._executeSchedule(schedule);
+          await this.executeSchedule(schedule);
           this.db.updateScheduledRun(schedule.id, {
             lastRunAt: now.toISOString(),
             nextRunAt: Scheduler.computeNextRun(schedule.frequency, schedule.dayOfWeek, schedule.timeOfDay)
@@ -57,10 +55,9 @@ class Scheduler extends EventEmitter {
     this.running = false;
   }
 
-  async _executeSchedule(schedule) {
+  async executeSchedule(schedule) {
     console.log(`[Scheduler] Executing schedule: ${schedule.name}`);
     try {
-      // Resolve devices
       const allDevices = this.db.getAllDevices();
       const devices = allDevices.filter(d => schedule.deviceIds.includes(d.id));
       if (devices.length === 0) {
@@ -68,15 +65,12 @@ class Scheduler extends EventEmitter {
         return;
       }
 
-      // Create run with scope instead of fetching all items here
-      // The TestRunManager will resolve the scope when the run starts
       const mediaScope = {
         type: schedule.mediaScope === 'recent' ? 'recent' : 'all',
         libraryIds: schedule.libraryIds,
         days: schedule.mediaDays || 7
       };
 
-      // Set parallel tests
       this.testRunManager.testRunner.setMaxParallelTests(schedule.parallelTests || 2);
 
       const config = {
@@ -87,7 +81,10 @@ class Scheduler extends EventEmitter {
         }
       };
 
-      const testRun = this.testRunManager.createTestRun(config);
+      const now = new Date();
+      const pad = (n) => String(n).padStart(2, '0');
+      const runName = `${schedule.name} — ${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+      const testRun = this.testRunManager.createTestRun(config, runName);
       console.log(`[Scheduler] Created test run ${testRun.id} for schedule ${schedule.name}`);
       await this.testRunManager.startTestRun(testRun.id);
       this.emit('scheduledRunStarted', { scheduleId: schedule.id, testRunId: testRun.id });

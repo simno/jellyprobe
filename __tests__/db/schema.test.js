@@ -48,12 +48,13 @@ describe('DatabaseManager', () => {
 
     test('should seed default devices', () => {
       const devices = db.getAllDevices();
-      expect(devices.length).toBe(4);
-      expect(devices[0].name).toBe('720p H.264');
+      expect(devices.length).toBe(6);
+      expect(devices[0].name).toBe('Web Browser - 1080p');
       // Verify codec variety
       const codecs = devices.map(d => d.videoCodec);
       expect(codecs).toContain('h264');
       expect(codecs).toContain('hevc');
+      expect(codecs).toContain('vp9');
       expect(codecs).toContain('av1');
     });
   });

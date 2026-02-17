@@ -10,10 +10,11 @@ describe('TestRunner', () => {
     mockJellyfinClient = {
       getItem: jest.fn(),
       startPlaybackSession: jest.fn(),
+      reportPlaybackStarted: jest.fn(),
       reportPlaybackProgress: jest.fn(),
       stopPlayback: jest.fn(),
-      getActiveSessions: jest.fn(),
       getStreamUrl: jest.fn(),
+      downloadHlsStream: jest.fn(),
       downloadVideoChunk: jest.fn(),
       isValidVideoData: jest.fn()
     };
@@ -73,16 +74,12 @@ describe('TestRunner', () => {
       });
 
       mockJellyfinClient.getStreamUrl.mockReturnValue('http://test.com/stream.mp4');
-      mockJellyfinClient.downloadVideoChunk.mockResolvedValue({
+      mockJellyfinClient.downloadHlsStream.mockResolvedValue({
         success: true,
         bytesDownloaded: 5242880,
-        contentType: 'video/mp4',
-        data: Buffer.from('ftyp')
+        segmentsDownloaded: 3
       });
-      mockJellyfinClient.isValidVideoData.mockReturnValue(true);
-      mockJellyfinClient.reportPlaybackProgress.mockResolvedValue({});
       mockJellyfinClient.stopPlayback.mockResolvedValue({});
-      mockJellyfinClient.getActiveSessions.mockResolvedValue([]);
 
       // Queue and wait for completion
       await testRunner.queueTest('item-123', 1);
@@ -118,19 +115,15 @@ describe('TestRunner', () => {
       });
 
       mockJellyfinClient.getStreamUrl.mockReturnValue('http://test.com/stream.mp4');
-      mockJellyfinClient.downloadVideoChunk.mockResolvedValue({
+      mockJellyfinClient.downloadHlsStream.mockResolvedValue({
         success: true,
         bytesDownloaded: 5242880,
-        contentType: 'video/mp4',
-        data: Buffer.from('ftyp')
+        segmentsDownloaded: 3
       });
-      mockJellyfinClient.isValidVideoData.mockReturnValue(true);
-      mockJellyfinClient.getActiveSessions.mockResolvedValue([]);
-      mockJellyfinClient.reportPlaybackProgress.mockResolvedValue({});
       mockJellyfinClient.stopPlayback.mockResolvedValue({});
 
       await testRunner.queueTest('item-123', 1);
-      
+
       expect(events.length).toBeGreaterThan(0);
       expect(events[0]).toHaveProperty('queueLength');
     }, 15000);
@@ -231,11 +224,23 @@ describe('TestRunner', () => {
       });
       mockJellyfinClient.getStreamUrl.mockReturnValue('http://url');
       mockJellyfinClient.downloadHlsStream = jest.fn().mockResolvedValue({ success: true, bytesDownloaded: 100 });
-      mockJellyfinClient.getActiveSessions.mockResolvedValue([]);
+      mockJellyfinClient.reportPlaybackStarted.mockResolvedValue({});
       mockJellyfinClient.reportPlaybackProgress.mockResolvedValue({});
       mockJellyfinClient.stopPlayback.mockResolvedValue({});
 
-      await testRunner.runTest('item-1', 1, { duration: 0 });
+      await testRunner.runTest({
+        itemId: 'item-1',
+        deviceId: 1,
+        deviceConfig: {
+          deviceId: 'test-dev-123',
+          maxBitrate: 20000000,
+          audioCodec: 'aac',
+          videoCodec: 'h264',
+          maxWidth: 1920,
+          maxHeight: 1080
+        },
+        testConfig: { duration: 0 }
+      });
       
       expect(startedEvent).toHaveBeenCalled();
     }, 10000);

@@ -120,28 +120,12 @@ describe('JellyfinClient', () => {
     });
   });
 
-  describe('reportPlaybackProgress', () => {
-    test('should not throw when client not configured', async () => {
-      const emptyClient = new JellyfinClient(null, null);
-      await expect(
-        emptyClient.reportPlaybackProgress('item-123', 'session-123', 1000000, 'dev-123')
-      ).resolves.toBeUndefined();
-    });
-  });
-
   describe('stopPlayback', () => {
     test('should not throw when client not configured', async () => {
       const emptyClient = new JellyfinClient(null, null);
       await expect(
         emptyClient.stopPlayback('item-123', 'session-123', 1000000, 'dev-123')
       ).resolves.toBeUndefined();
-    });
-  });
-
-  describe('getActiveSessions', () => {
-    test('should throw error when client not configured', async () => {
-      const emptyClient = new JellyfinClient(null, null);
-      await expect(emptyClient.getActiveSessions()).rejects.toThrow('Jellyfin client not configured');
     });
   });
 

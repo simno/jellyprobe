@@ -1,5 +1,3 @@
-/* settings.js — Full-page settings */
- 
 const SettingsPage = {
   _section: 'connection',
 
@@ -128,7 +126,6 @@ const SettingsPage = {
         </div>
       </div>`;
 
-    // Library card selection handler
     body.querySelectorAll('.select-card[data-lib-id]').forEach(el => {
       el.addEventListener('click', () => {
         el.classList.toggle('selected');
@@ -227,6 +224,8 @@ const SettingsPage = {
         <div class="form-group">
           <label class="form-label">Max Bitrate</label>
           <select class="form-select" id="mdBitrate">
+            <option value="1500000" ${device?.maxBitrate === 1500000 ? 'selected' : ''}>480p — 1.5 Mbps</option>
+            <option value="3000000" ${device?.maxBitrate === 3000000 ? 'selected' : ''}>720p — 3 Mbps</option>
             <option value="4000000" ${device?.maxBitrate === 4000000 ? 'selected' : ''}>720p — 4 Mbps</option>
             <option value="5000000" ${device?.maxBitrate === 5000000 ? 'selected' : ''}>720p — 5 Mbps</option>
             <option value="8000000" ${device?.maxBitrate === 8000000 ? 'selected' : ''}>DVD — 8 Mbps</option>

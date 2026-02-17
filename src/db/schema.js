@@ -33,7 +33,6 @@ class DatabaseManager {
   ]);
 
   initialize() {
-    // Ensure directory exists
     const dir = path.dirname(this.dbPath);
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
@@ -99,8 +98,6 @@ class DatabaseManager {
         deviceId INTEGER,
         format TEXT,
         duration INTEGER,
-        seekTested INTEGER DEFAULT 0,
-        seekSuccess INTEGER DEFAULT 0,
         errors TEXT,
         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
         success INTEGER DEFAULT 0,
@@ -127,7 +124,6 @@ class DatabaseManager {
         mediaDays INTEGER DEFAULT 7,
         testDuration INTEGER DEFAULT 30,
         parallelTests INTEGER DEFAULT 2,
-        seekTest INTEGER DEFAULT 1,
         lastRunAt DATETIME,
         nextRunAt DATETIME,
         createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -177,22 +173,12 @@ class DatabaseManager {
     // Migrate tests table for v2.0
     const testColumns = this.db.pragma('table_info(tests)');
     const hasTestRunId = testColumns.some(col => col.name === 'testRunId');
-    const hasSeekTested = testColumns.some(col => col.name === 'seekTested');
-    const hasSeekSuccess = testColumns.some(col => col.name === 'seekSuccess');
     const hasBytesDownloaded = testColumns.some(col => col.name === 'bytesDownloaded');
-    
+
     if (!hasTestRunId) {
       this.db.exec('ALTER TABLE tests ADD COLUMN testRunId INTEGER REFERENCES test_runs(id)');
     }
-    
-    if (!hasSeekTested) {
-      this.db.exec('ALTER TABLE tests ADD COLUMN seekTested INTEGER DEFAULT 0');
-    }
-    
-    if (!hasSeekSuccess) {
-      this.db.exec('ALTER TABLE tests ADD COLUMN seekSuccess INTEGER DEFAULT 0');
-    }
-    
+
     if (!hasBytesDownloaded) {
       console.log('Adding bytesDownloaded column to tests table...');
       this.db.exec('ALTER TABLE tests ADD COLUMN bytesDownloaded INTEGER DEFAULT 0');
@@ -216,17 +202,12 @@ class DatabaseManager {
     if (existingConfig.count === 0) {
       const jellyfinUrl = process.env.JELLYFIN_URL || 'http://localhost:8096';
       const apiKey = process.env.API_KEY || '';
-      const scanLibraryId = process.env.SCAN_LIBRARY_ID || '';
-      
       const encryptedApiKey = apiKey ? this.encrypt(apiKey) : '';
-      
-      // Convert single library ID to array format
-      const libraryIds = scanLibraryId ? JSON.stringify([scanLibraryId]) : '[]';
-      
+
       this.db.prepare(`
         INSERT INTO config (jellyfinUrl, apiKey, scanLibraryId, scanLibraryIds, scanInterval, testDuration, maxParallelTests, showPreviews, maxParallelPreviews, formats)
-        VALUES (?, ?, ?, ?, 300, 30, 1, 1, 6, '["mp4","mkv","avi","mov","webm"]')
-      `).run(jellyfinUrl, encryptedApiKey, scanLibraryId, libraryIds);
+        VALUES (?, ?, '', '[]', 300, 30, 1, 1, 6, '["mp4","mkv","avi","mov","webm"]')
+      `).run(jellyfinUrl, encryptedApiKey);
 
       this.db.prepare(`
         INSERT INTO scan_state (id, lastScanTime, itemsQueued) 
@@ -236,47 +217,61 @@ class DatabaseManager {
 
     const existingDevices = this.db.prepare('SELECT COUNT(*) as count FROM devices').get();
     if (existingDevices.count === 0) {
-      // Default profiles for common codec testing at 720p
+      // Default profiles representing real device scenarios with codec variety
       const defaultProfiles = [
         {
-          name: '720p H.264',
-          deviceId: 'jellyprobe-h264-720p',
-          maxBitrate: 5000000,
+          name: 'Web Browser - 1080p',
+          deviceId: 'jellyprobe-web-1080p',
+          maxBitrate: 10000000,
+          audioCodec: 'aac',
+          videoCodec: 'h264',
+          maxWidth: 1920,
+          maxHeight: 1080
+        },
+        {
+          name: 'Mobile - 720p',
+          deviceId: 'jellyprobe-mobile-720p',
+          maxBitrate: 3000000,
           audioCodec: 'aac',
           videoCodec: 'h264',
           maxWidth: 1280,
-          maxHeight: 720,
-          description: 'Standard HD - Most compatible'
+          maxHeight: 720
         },
         {
-          name: '720p HEVC',
-          deviceId: 'jellyprobe-hevc-720p',
-          maxBitrate: 4000000,
+          name: 'Smart TV - 4K HEVC',
+          deviceId: 'jellyprobe-tv-4k',
+          maxBitrate: 80000000,
           audioCodec: 'aac',
           videoCodec: 'hevc',
-          maxWidth: 1280,
-          maxHeight: 720,
-          description: 'Efficient HD - Modern devices'
+          maxWidth: 3840,
+          maxHeight: 2160
         },
         {
-          name: '720p HEVC 10-bit',
-          deviceId: 'jellyprobe-hevc-10bit-720p',
-          maxBitrate: 5000000,
-          audioCodec: 'aac',
-          videoCodec: 'hevc',
-          maxWidth: 1280,
-          maxHeight: 720,
-          description: 'HDR content - 10-bit color depth'
+          name: 'Chromecast - 1080p VP9',
+          deviceId: 'jellyprobe-chromecast-1080p',
+          maxBitrate: 8000000,
+          audioCodec: 'opus',
+          videoCodec: 'vp9',
+          maxWidth: 1920,
+          maxHeight: 1080
         },
         {
-          name: '720p AV1',
-          deviceId: 'jellyprobe-av1-720p',
-          maxBitrate: 3500000,
+          name: 'Streaming Box - 4K AV1',
+          deviceId: 'jellyprobe-streaming-4k',
+          maxBitrate: 20000000,
           audioCodec: 'aac',
           videoCodec: 'av1',
-          maxWidth: 1280,
-          maxHeight: 720,
-          description: 'Next-gen codec - Best efficiency'
+          maxWidth: 3840,
+          maxHeight: 2160
+        },
+        {
+          name: 'Legacy Device - 480p',
+          deviceId: 'jellyprobe-legacy-480p',
+          maxBitrate: 1500000,
+          audioCodec: 'aac',
+          videoCodec: 'h264',
+          maxWidth: 854,
+          maxHeight: 480
         }
       ];
 
@@ -409,8 +404,8 @@ class DatabaseManager {
 
   addTestResult(test) {
     return this.db.prepare(`
-      INSERT INTO tests (testRunId, itemId, itemName, path, deviceId, format, duration, seekTested, seekSuccess, errors, success, bytesDownloaded)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO tests (testRunId, itemId, itemName, path, deviceId, format, duration, errors, success, bytesDownloaded)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       test.testRunId || null,
       test.itemId,
@@ -419,8 +414,6 @@ class DatabaseManager {
       test.deviceId,
       test.format,
       test.duration,
-      test.seekTested ? 1 : 0,
-      test.seekSuccess ? 1 : 0,
       test.errors ? JSON.stringify(test.errors) : null,
       test.success ? 1 : 0,
       test.bytesDownloaded || 0
@@ -546,13 +539,13 @@ class DatabaseManager {
   // --- Scheduled Runs ---
   createScheduledRun(data) {
     const result = this.db.prepare(`
-      INSERT INTO scheduled_runs (name, enabled, frequency, dayOfWeek, timeOfDay, deviceIds, libraryIds, mediaScope, mediaDays, testDuration, parallelTests, seekTest, nextRunAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO scheduled_runs (name, enabled, frequency, dayOfWeek, timeOfDay, deviceIds, libraryIds, mediaScope, mediaDays, testDuration, parallelTests, nextRunAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       data.name, data.enabled ? 1 : 0, data.frequency, data.dayOfWeek ?? null,
       data.timeOfDay, JSON.stringify(data.deviceIds), JSON.stringify(data.libraryIds),
       data.mediaScope || 'all', data.mediaDays || 7,
-      data.testDuration || 30, data.parallelTests || 2, data.seekTest ? 1 : 0,
+      data.testDuration || 30, data.parallelTests || 2,
       data.nextRunAt || null
     );
     return result.lastInsertRowid;
@@ -603,21 +596,6 @@ class DatabaseManager {
     row.libraryIds = JSON.parse(row.libraryIds || '[]');
     row.enabled = !!row.enabled;
     return row;
-  }
-
-  // Helper method to format bitrate for display
-  static formatBitrate(bitrate) {
-    const mbps = bitrate / 1000000;
-    return `${mbps} Mbps`;
-  }
-
-  // Bitrate presets
-  static get BITRATE_PRESETS() {
-    return {
-      '720p': { value: 4000000, label: '720p - 4 Mbps' },
-      '1080p': { value: 10000000, label: '1080p - 10 Mbps' },
-      '4K': { value: 40000000, label: '4K - 40 Mbps' }
-    };
   }
 
   close() {

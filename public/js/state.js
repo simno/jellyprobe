@@ -1,5 +1,3 @@
-/* state.js — Simple reactive state store */
- 
 const Store = {
   _state: {
     config: null,

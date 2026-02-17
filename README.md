@@ -8,10 +8,9 @@
 [![Docker Version](https://ghcr-badge.egpl.dev/simno/jellyprobe/tags?label=version&n=1&ignore=sha256*,latest)](https://github.com/simno/jellyprobe/pkgs/container/jellyprobe)
 [![Node](https://img.shields.io/badge/node-%3E%3D25-brightgreen.svg)](https://nodejs.org)
 
-Have you ever had a media file that fails to play in Jellyfin, or that a user says won't play on their device.
 JellyProbe is an automated testing tool for Jellyfin servers. It simulates real-world client playback by triggering 
 transcoding and validating HLS stream delivery across multiple device profiles, making it easier to identify and 
-troubleshoot playback issues in your media library or transcoding settings.
+troubleshoot playback issues with files in your media library or transcoding settings.
 
 This helps server admins verify that their transcoding hardware (QuickSync, NVENC, etc.) and software configuration can 
 handle various codecs and bitrates without manual testing.
@@ -20,10 +19,10 @@ handle various codecs and bitrates without manual testing.
 
 -   **Automated Playback Tests:** Simulates real HLS streaming sessions to verify transcoding.
 -   **Device Profiles:** Define custom profiles (H.264, HEVC, AV1) with specific bitrate and resolution constraints.
--   **Intelligent Library Scanning:** Can detect new media and can create custom media test runs.
+-   **Intelligent Library Scanning:** Can detect new media and can create custom test runs.
+-   **Parallel Execution:** Load test your Jellyfin server by running many transcoding streams in parallel.
 -   **Live Dashboard:** Watch parallel transcoding in real-time with a live video preview grid.
 -   **Scheduling:** Set up recurring daily or weekly test runs for your libraries.
--   **SSRF Protection:** Built-in security proxy for Jellyfin media paths.
 
 ## Tech Stack
 
@@ -33,7 +32,8 @@ handle various codecs and bitrates without manual testing.
 
 ## Screenshot
 
-![Test Run](./docs/screenshot.png)
+![Test Run](docs/screenshot1.png)
+![Test Results](docs/screenshot2.png)
 
 ## Installation
 
@@ -43,10 +43,31 @@ handle various codecs and bitrates without manual testing.
 docker run -d \
   --name jellyprobe \
   -p 3000:3000 \
-  -v /path/to/data:/app/data \
+  -v /path/to/data:/data \
   -e ENCRYPTION_KEY=your_secret_key \
+  -e TZ=Europe/Berlin \
   ghcr.io/simno/jellyprobe:latest
 ```
+
+#### ENCRYPTION_KEY
+
+The `ENCRYPTION_KEY` is used to encrypt your Jellyfin API key at rest in the SQLite database (AES-256-CBC). Generate one with:
+
+```bash
+openssl rand -hex 32
+```
+
+**Important:** If you don't set `ENCRYPTION_KEY`, a random key is generated on each startup. This means your stored API key will fail to decrypt after a container restart, and you'll need to re-enter it in Settings. Always set a fixed value for persistent deployments.
+
+#### Timezone
+
+The Docker container defaults to UTC. Scheduled test runs use the container's local time, so set `TZ` to your timezone to ensure schedules trigger at the expected time:
+
+```bash
+-e TZ=Europe/Berlin
+```
+
+See the [list of valid timezone names](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones).
 
 ### Manual Installation
 
@@ -58,7 +79,7 @@ docker run -d \
 ## Usage
 
 1.  **Setup:** Enter your Jellyfin URL and API Key in the Settings.
-2.  **Profiles:** Create device profiles for the codecs you want to test (e.g., a "4K HEVC" profile and a "720p H.264" profile).
+2.  **Profiles:** Create device profiles for the codecs you want to test (e.g., a "Smart TV - 4K HEVC" profile and a "Mobile Remote - 720p" profile).
 3.  **Wizard:** Click "New Run" to start a test. You can choose:
     -   **All Media:** Tests every item in selected libraries.
     -   **Recent:** Tests only media added in the last X days.
@@ -105,18 +126,6 @@ To create a new release:
 ./release.sh minor  # Releases v0.2.0
 ./release.sh major  # Releases v1.0.0
 ```
-
-**This script will:**
-1. Check you're on the `main` branch
-2. Verify there are no uncommitted changes
-3. Run `npm run check`
-4. Bump the version in `package.json`
-5. Update the version in `public/index.html`
-6. Create a git commit and tag
-7. Ask for confirmation before pushing to origin
-8. Push the commit and tag to GitHub (optional)
-
-**Note:** The version is also accessible via the `/api/version` endpoint and displayed in Settings → About.
 
 ## Development
 
