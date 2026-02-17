@@ -2,27 +2,46 @@ name: Build and Push Docker Image
 
 on:
   push:
-    branches:
-      - main
     tags:
       - 'v*.*.*'
-  workflow_run:
-    workflows: ["Test"]
-    types: [completed]
-    branches: [main]
 
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  test:
+    name: Test before publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6
+        with:
+          node-version: '25.x'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run lint
+        run: npm run lint
+
+      - name: Run npm audit
+        run: npm audit --omit=dev
+
+      - name: Run tests
+        run: npm test
+
   build-and-push:
     name: Build and Push Docker Image
     runs-on: ubuntu-latest
-    # Only run if triggered by tag push, or if the Test workflow succeeded
-    if: >
-      startsWith(github.ref, 'refs/tags/v') ||
-      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+    needs: test
     permissions:
       contents: read
       packages: write
@@ -50,11 +69,10 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=ref,event=branch
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=semver,pattern={{major}}
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest
 
       - name: Build and push Docker image
         id: build
@@ -84,7 +102,6 @@ jobs:
 
       - name: Generate artifact attestation
         uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f # v3
-        if: startsWith(github.ref, 'refs/tags/v')
         with:
           subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           subject-digest: ${{ steps.build.outputs.digest }}
