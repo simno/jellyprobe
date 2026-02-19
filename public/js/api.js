@@ -63,6 +63,7 @@ const Api = {
   pauseTestRun(id)   { return this.post(`/api/test-runs/${id}/pause`); },
   resumeTestRun(id)  { return this.post(`/api/test-runs/${id}/resume`); },
   cancelTestRun(id)  { return this.post(`/api/test-runs/${id}/cancel`); },
+  rerunTestRun(id)   { return this.post(`/api/test-runs/${id}/rerun`); },
   getSchedules()     { return this.get('/api/schedules'); },
   createSchedule(d)  { return this.post('/api/schedules', d); },
   updateSchedule(id, d) { return this.put(`/api/schedules/${id}`, d); },

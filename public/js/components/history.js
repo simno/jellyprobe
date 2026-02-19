@@ -61,7 +61,10 @@ const HistoryPage = {
         : null;
 
       container.innerHTML = `
-        <button class="btn btn-ghost btn-sm mb-16" id="histBack"><i data-lucide="arrow-left"></i> Back to list</button>
+        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 16px;">
+          <button class="btn btn-ghost btn-sm" id="histBack"><i data-lucide="arrow-left"></i> Back to list</button>
+          <button class="btn btn-primary btn-sm" id="histRerun"><i data-lucide="repeat"></i> Rerun</button>
+        </div>
 
         <h2 class="page-title" style="font-size:1.3rem">${Utils.escapeHtml(run.name || 'Test Run')}</h2>
         <p class="text-sm text-2 mb-24">${Utils.relativeTime(run.createdAt)}</p>
@@ -88,7 +91,8 @@ const HistoryPage = {
         </div>`;
 
       document.getElementById('histBack').addEventListener('click', () => this.init());
-      
+      document.getElementById('histRerun').addEventListener('click', () => this._rerunTest(runId));
+
       const check = document.getElementById('showPassedCheckHist');
       if (check) {
         check.checked = Store.get('showPassed') || false;
@@ -103,6 +107,27 @@ const HistoryPage = {
       if (typeof lucide !== 'undefined') lucide.createIcons();
     } catch (e) {
       container.innerHTML = `<p class="text-2">Failed to load run: ${Utils.escapeHtml(e.message)}</p>`;
+    }
+  },
+
+  async _rerunTest(runId) {
+    const btn = document.getElementById('histRerun');
+    const originalText = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<div class="spinner" style="width: 16px; height: 16px;"></div>';
+
+    try {
+      const result = await Api.rerunTestRun(runId);
+      if (result.success && result.testRun) {
+        await Api.startTestRun(result.testRun.id);
+        Store.set('currentTestRun', null);
+        window.location.hash = '#/dashboard';
+      }
+    } catch (error) {
+      btn.disabled = false;
+      btn.innerHTML = originalText;
+      const errorMsg = error.message || 'Failed to rerun test';
+      alert(`Error: ${errorMsg}`);
     }
   }
 };

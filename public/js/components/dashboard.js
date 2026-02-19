@@ -69,9 +69,19 @@ const DashboardPage = {
       document.getElementById('app').innerHTML = `
         <div class="empty-state" style="margin-top:80px">
           <i data-lucide="inbox"></i>
-          <p>No active test run.<br><a href="#/" class="text-accent">Create one →</a></p>
+          <p>No active test run.</p>
+          <div style="display: flex; gap: 12px; justify-content: center; margin-top: 16px;">
+            <a href="#/" class="btn btn-primary"><i data-lucide="plus"></i> New Run</a>
+            <button class="btn btn-ghost" id="dashRerunBtn"><i data-lucide="repeat"></i> Rerun</button>
+          </div>
+          <div id="rerunModal" style="display:none; margin-top: 24px;"></div>
         </div>`;
       if (typeof lucide !== 'undefined') lucide.createIcons();
+
+      const rerunBtn = document.getElementById('dashRerunBtn');
+      if (rerunBtn) {
+        rerunBtn.addEventListener('click', async () => this._showRerunOptions());
+      }
       return;
     }
 
@@ -597,7 +607,10 @@ const DashboardPage = {
         : null;
 
       let html = `
-        <div class="section-title mb-12"><i data-lucide="bar-chart-3"></i> Summary</div>
+        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 16px;">
+          <div class="section-title" style="margin-bottom: 0;"><i data-lucide="bar-chart-3"></i> Summary</div>
+          <button class="btn btn-primary btn-sm ml-auto" id="completedRerunBtn"><i data-lucide="repeat"></i> Rerun</button>
+        </div>
         <div class="bw-summary-row">
           <div class="stat-card accent"><div class="stat-label">Total Data</div><div class="stat-value" style="font-size:1.5rem">${formatBytes(totalBytes)}</div></div>
           <div class="stat-card success"><div class="stat-label">Pass Rate</div><div class="stat-value" style="font-size:1.5rem">${passRate}%</div></div>
@@ -687,6 +700,29 @@ const DashboardPage = {
         });
       }
 
+      const rerunBtn = document.getElementById('completedRerunBtn');
+      if (rerunBtn) {
+        rerunBtn.addEventListener('click', async () => {
+          rerunBtn.disabled = true;
+          rerunBtn.innerHTML = '<div class="spinner" style="width: 16px; height: 16px;"></div>';
+          try {
+            const result = await Api.rerunTestRun(run.id);
+            if (result.success && result.testRun) {
+              // Start the test run immediately
+              await Api.startTestRun(result.testRun.id);
+              // Clear current run and refresh
+              Store.set('currentTestRun', null);
+              this.init();
+            }
+          } catch (error) {
+            rerunBtn.disabled = false;
+            rerunBtn.innerHTML = '<i data-lucide="repeat"></i> Rerun';
+            alert(`Error: ${error.message}`);
+            if (typeof lucide !== 'undefined') lucide.createIcons();
+          }
+        });
+      }
+
       if (typeof lucide !== 'undefined') lucide.createIcons();
     } catch (_e) {
       completedSection.innerHTML = '<p class="text-2">Failed to load results.</p>';
@@ -764,6 +800,65 @@ const DashboardPage = {
 
     html += '</tbody></table></div>';
     return html;
+  },
+
+  async _showRerunOptions() {
+    const modal = document.getElementById('rerunModal');
+    if (!modal) return;
+
+    modal.innerHTML = '<div class="spinner"></div>';
+    modal.style.display = 'block';
+
+    try {
+      const runs = await Api.getTestRuns();
+      const completed = (runs || []).filter(r => r.status === 'completed' || r.status === 'cancelled').slice(0, 10);
+
+      if (!completed.length) {
+        modal.innerHTML = '<p class="text-2">No previous test runs to rerun.</p>';
+        return;
+      }
+
+      modal.innerHTML = `
+        <div style="border: 1px solid var(--border-subtle); border-radius: 8px; padding: 12px; background: var(--bg-card);">
+          <p style="font-size: 0.875rem; color: var(--text-2); margin-bottom: 12px;">Select a test run to rerun:</p>
+          ${completed.map(run => `
+            <div class="run-option" data-rid="${run.id}" style="padding: 8px; border-radius: 4px; cursor: pointer; margin-bottom: 8px; border: 1px solid var(--border-subtle); transition: background 0.2s;">
+              <div style="font-weight: 500; color: var(--text-1);">${Utils.escapeHtml(run.name || 'Test Run')}</div>
+              <div style="font-size: 0.75rem; color: var(--text-2);">${run.totalTests} tests · ${Utils.relativeTime(run.createdAt)}</div>
+            </div>
+          `).join('')}
+        </div>`;
+
+      document.querySelectorAll('.run-option').forEach(el => {
+        el.addEventListener('mouseover', () => el.style.background = 'var(--bg-hover)');
+        el.addEventListener('mouseout', () => el.style.background = '');
+        el.addEventListener('click', () => this._rerunFromDashboard(parseInt(el.dataset.rid)));
+      });
+    } catch (error) {
+      modal.innerHTML = `<p class="text-2">Error loading test runs: ${Utils.escapeHtml(error.message)}</p>`;
+    }
+  },
+
+  async _rerunFromDashboard(runId) {
+    const modal = document.getElementById('rerunModal');
+    if (!modal) return;
+
+    modal.innerHTML = '<div class="spinner"></div>';
+
+    try {
+      const result = await Api.rerunTestRun(runId);
+      if (result.success && result.testRun) {
+        // Start the test run immediately
+        await Api.startTestRun(result.testRun.id);
+        modal.style.display = 'none';
+        modal.innerHTML = '';
+        // Clear the cached run and fetch the new active one
+        Store.set('currentTestRun', null);
+        this.init();
+      }
+    } catch (error) {
+      modal.innerHTML = `<p class="text-2 text-danger">Error: ${Utils.escapeHtml(error.message)}</p>`;
+    }
   },
 
   destroy() {

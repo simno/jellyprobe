@@ -518,6 +518,17 @@ app.post('/api/test-runs/:id/cancel', (req, res) => {
   }
 });
 
+app.post('/api/test-runs/:id/rerun', (req, res) => {
+  try {
+    const id = parseInt(req.params.id);
+    if (isNaN(id)) return res.status(400).json({ error: 'Invalid test run ID' });
+    const newTestRun = testRunManager.rerunTestRun(id);
+    res.json({ success: true, testRun: newTestRun });
+  } catch (error) {
+    res.status(500).json({ error: error.message || 'Failed to rerun test' });
+  }
+});
+
 // --- Scheduled Runs ---
 app.get('/api/schedules', (req, res) => {
   try {

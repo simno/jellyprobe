@@ -315,6 +315,21 @@ class TestRunManager extends EventEmitter {
   getTestRunResults(id) {
     return this.db.getTestRunResults(id);
   }
+
+  rerunTestRun(previousRunId) {
+    const previousRun = this.db.getTestRun(previousRunId);
+    if (!previousRun) {
+      throw new Error('Test run not found');
+    }
+
+    const name = previousRun.name.endsWith('(rerun)')
+      ? previousRun.name
+      : `${previousRun.name} (rerun)`;
+    const newRun = this.createTestRun(previousRun.config, name);
+
+    this.emit('testRunRerun', { previousRunId, newRunId: newRun.id });
+    return newRun;
+  }
 }
 
 module.exports = TestRunManager;
