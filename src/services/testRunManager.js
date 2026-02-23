@@ -157,9 +157,24 @@ class TestRunManager extends EventEmitter {
 
       console.log(`[TestRunManager] Total queued tests: ${totalQueued}`);
 
+      // If no media items were found, complete the run immediately
+      if (totalQueued === 0) {
+        console.log(`[TestRunManager] No media to process for run ${runId}, marking as completed`);
+        this.db.updateTestRun(runId, {
+          status: 'completed',
+          totalTests: 0,
+          completedAt: new Date().toISOString()
+        });
+        this.emit('testRunCompleted', { id: runId });
+        if (this.currentRunId === runId) {
+          this.currentRunId = null;
+        }
+        return;
+      }
+
       // Correct totalTests if the actual count differs from the estimate
       const testRun = this.db.getTestRun(runId);
-      if (totalQueued !== testRun.totalTests && totalQueued > 0) {
+      if (totalQueued !== testRun.totalTests) {
         this.db.updateTestRun(runId, { totalTests: totalQueued });
       }
     } catch (err) {
