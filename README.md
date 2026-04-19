@@ -18,7 +18,7 @@ handle various codecs and bitrates without manual testing.
 ## Key Features
 
 -   **Automated Playback Tests:** Simulates real HLS streaming sessions to verify transcoding.
--   **Device Profiles:** Define custom profiles (H.264, HEVC, AV1) with specific bitrate and resolution constraints.
+-   **Device Profiles:** Define custom profiles for H264, HEVC, MPEG2, VP9, AV1, HEVC 10bit, VP9 10bit, HEVC RExt, VC1, and VP8 with specific bitrate and resolution constraints.
 -   **Intelligent Library Scanning:** Can detect new media and can create custom test runs.
 -   **Parallel Execution:** Load test your Jellyfin server by running many transcoding streams in parallel.
 -   **Live Dashboard:** Watch parallel transcoding in real-time with a live video preview grid.
@@ -79,7 +79,7 @@ See the [list of valid timezone names](https://en.wikipedia.org/wiki/List_of_tz_
 ## Usage
 
 1.  **Setup:** Enter your Jellyfin URL and API Key in the Settings.
-2.  **Profiles:** Create device profiles for the codecs you want to test (e.g., a "Smart TV - 4K HEVC" profile and a "Mobile Remote - 720p" profile).
+2.  **Profiles:** Create device profiles for the codecs you want to test, including Jellyfin hardware decode variants such as HEVC 10bit, VP9 10bit, and HEVC RExt profiles.
 3.  **Wizard:** Click "New Run" to start a test. You can choose:
     -   **All Media:** Tests every item in selected libraries.
     -   **Recent:** Tests only media added in the last X days.

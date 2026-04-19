@@ -1,4 +1,4 @@
-/* global Chart */
+/* global Chart, VideoCodecRegistry */
 
 const DashboardPage = {
   _pollTimer: null,
@@ -83,6 +83,10 @@ const DashboardPage = {
         rerunBtn.addEventListener('click', async () => this._showRerunOptions());
       }
       return;
+    }
+
+    if (run.status !== 'completed' && run.status !== 'cancelled') {
+      this._prepareForActiveRun();
     }
 
     this._updateUI(run);
@@ -319,6 +323,28 @@ const DashboardPage = {
     if (this._pollTimer) { clearInterval(this._pollTimer); this._pollTimer = null; }
   },
 
+  _prepareForActiveRun() {
+    this._stopPolling();
+    this._destroyPieChart();
+    this._clearPreviews();
+    this._destroyBwChart();
+
+    const liveSection = document.getElementById('liveSection');
+    const completedSection = document.getElementById('completedSection');
+    const progressWrap = document.getElementById('progressWrap');
+    const logPanel = document.getElementById('logPanel');
+    const resultsWrap = document.getElementById('resultsWrap');
+
+    if (liveSection) liveSection.style.display = '';
+    if (progressWrap) progressWrap.style.display = '';
+    if (completedSection) {
+      completedSection.style.display = 'none';
+      completedSection.innerHTML = '';
+    }
+    if (logPanel) logPanel.innerHTML = '';
+    if (resultsWrap) resultsWrap.innerHTML = '';
+  },
+
   /* --- Live Preview --- */
   _maxPreviewSlots() {
     const config = Store.get('config');
@@ -387,7 +413,7 @@ const DashboardPage = {
       <video autoplay muted playsinline></video>
       <div class="preview-cell-overlay">
         <span class="preview-cell-label" title="${Utils.escapeHtml(streamInfo.itemName || '')}">${Utils.escapeHtml(streamInfo.itemName || 'Testing…')}</span>
-        <span class="preview-cell-badge">${streamInfo.deviceConfig?.videoCodec || ''}</span>
+        <span class="preview-cell-badge">${VideoCodecRegistry.getVideoCodecLabel(streamInfo.deviceConfig?.videoCodec)}</span>
       </div>`;
 
     const video = slot.querySelector('video');
@@ -710,9 +736,9 @@ const DashboardPage = {
             if (result.success && result.testRun) {
               // Start the test run immediately
               await Api.startTestRun(result.testRun.id);
-              // Clear current run and refresh
-              Store.set('currentTestRun', null);
-              this.init();
+              const activeRun = await Api.getTestRun(result.testRun.id);
+              Store.set('currentTestRun', activeRun);
+              await this.init();
             }
           } catch (error) {
             rerunBtn.disabled = false;
@@ -850,11 +876,11 @@ const DashboardPage = {
       if (result.success && result.testRun) {
         // Start the test run immediately
         await Api.startTestRun(result.testRun.id);
+        const activeRun = await Api.getTestRun(result.testRun.id);
         modal.style.display = 'none';
         modal.innerHTML = '';
-        // Clear the cached run and fetch the new active one
-        Store.set('currentTestRun', null);
-        this.init();
+        Store.set('currentTestRun', activeRun);
+        await this.init();
       }
     } catch (error) {
       modal.innerHTML = `<p class="text-2 text-danger">Error: ${Utils.escapeHtml(error.message)}</p>`;

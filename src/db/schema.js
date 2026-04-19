@@ -2,7 +2,11 @@ const Database = require('better-sqlite3');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const { normalizeVideoCodec } = require('../shared/video-codecs');
 
+if (!process.env.ENCRYPTION_KEY && process.env.NODE_ENV === 'production') {
+  throw new Error('ENCRYPTION_KEY must be set in production — see README for how to generate one.');
+}
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || crypto.randomBytes(32).toString('hex');
 const ALGORITHM = 'aes-256-cbc';
 
@@ -376,7 +380,7 @@ class DatabaseManager {
       device.deviceId,
       device.maxBitrate || 20000000,
       device.audioCodec || 'aac',
-      device.videoCodec || 'h264',
+      normalizeVideoCodec(device.videoCodec),
       device.maxWidth || 1920,
       device.maxHeight || 1080
     );
@@ -389,7 +393,7 @@ class DatabaseManager {
     for (const [key, value] of Object.entries(updates)) {
       if (!DatabaseManager.DEVICE_FIELDS.has(key)) continue;
       fields.push(`${key} = ?`);
-      values.push(value);
+      values.push(key === 'videoCodec' ? normalizeVideoCodec(value) : value);
     }
     
     if (fields.length === 0) return;

@@ -10,6 +10,9 @@ const TestRunner = require('./services/testRunner');
 const LibraryScanner = require('./services/scanner');
 const TestRunManager = require('./services/testRunManager');
 const Scheduler = require('./services/scheduler');
+const { normalizeVideoCodec } = require('./shared/video-codecs');
+
+const VIDEO_CODECS_FILE = path.join(__dirname, 'shared/video-codecs.js');
 
 const app = express();
 const server = http.createServer(app);
@@ -34,10 +37,17 @@ const ALLOWED_PROXY_PREFIXES = ['/Videos/', '/Audio/'];
 
 app.use('/jf', async (req, res) => {
   try {
-    // SSRF protection: normalize the path to prevent double-encoding and traversal bypasses
+    // SSRF protection: decode then normalize to block both traversal and percent-encoded bypasses
     const parsedPath = new URL(req.url, 'http://localhost').pathname;
-    const normalizedPath = path.posix.normalize(parsedPath);
-    if (!ALLOWED_PROXY_PREFIXES.some(p => normalizedPath.startsWith(p))) {
+    let decodedPath;
+    try {
+      decodedPath = decodeURIComponent(parsedPath);
+    } catch (_e) {
+      return res.status(400).json({ error: 'Malformed proxy path' });
+    }
+    const normalizedPath = path.posix.normalize(decodedPath);
+    if (normalizedPath.includes('..') ||
+        !ALLOWED_PROXY_PREFIXES.some(p => normalizedPath.startsWith(p))) {
       return res.status(403).json({ error: 'Forbidden proxy path' });
     }
 
@@ -72,6 +82,14 @@ app.use('/jf', async (req, res) => {
 
 app.use(express.json({ limit: '5mb' }));
 app.use(express.urlencoded({ limit: '5mb', extended: true }));
+
+// Shared codec registry lives under src/ but the browser needs it too — serve it explicitly
+// so the backend doesn't have to reach into public/ for its require path.
+app.get('/js/video-codecs.js', (_req, res) => {
+  res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+  res.sendFile(VIDEO_CODECS_FILE);
+});
+
 app.use(express.static(path.join(__dirname, '../public')));
 
 const db = new DatabaseManager(path.join(DATA_PATH, 'jellyprobe.db'));
@@ -108,8 +126,11 @@ wss.on('connection', (ws) => {
 function broadcast(event, data) {
   const message = JSON.stringify({ event, data });
   clients.forEach(client => {
-    if (client.readyState === WebSocket.OPEN) {
+    if (client.readyState !== WebSocket.OPEN) return;
+    try {
       client.send(message);
+    } catch (err) {
+      console.error('WebSocket send failed:', err);
     }
   });
 }
@@ -263,7 +284,10 @@ app.get('/api/devices', (req, res) => {
 
 app.post('/api/devices', (req, res) => {
   try {
-    const device = req.body;
+    const device = {
+      ...req.body,
+      videoCodec: normalizeVideoCodec(req.body?.videoCodec)
+    };
     if (!device || !device.name || !device.deviceId) {
       return res.status(400).json({ error: 'Name and deviceId are required' });
     }
@@ -280,6 +304,9 @@ app.put('/api/devices/:id', (req, res) => {
     if (isNaN(id)) return res.status(400).json({ error: 'Invalid device ID' });
     const updates = req.body;
     if (!updates || typeof updates !== 'object') return res.status(400).json({ error: 'Invalid request body' });
+    if (Object.hasOwn(updates, 'videoCodec')) {
+      updates.videoCodec = normalizeVideoCodec(updates.videoCodec);
+    }
     db.updateDevice(id, updates);
     res.json({ success: true });
   } catch (_error) {
@@ -623,7 +650,7 @@ app.get('/api/stream/:itemId', async (req, res) => {
 
     const masterUrl = jellyfinClient.getStreamUrl(itemId, mediaSourceId, deviceId, {
       playSessionId: playSessionId || '',
-      videoCodec: videoCodec || 'h264',
+      videoCodec: normalizeVideoCodec(videoCodec),
       audioCodec: audioCodec || 'aac',
       maxBitrate: Math.min(parseInt(maxBitrate) || 20000000, 100000000),
       maxWidth: Math.min(parseInt(maxWidth) || 1920, 3840),

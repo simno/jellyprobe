@@ -1,3 +1,5 @@
+/* global VideoCodecRegistry */
+
 const SettingsPage = {
   _section: 'connection',
 
@@ -159,7 +161,7 @@ const SettingsPage = {
               <div class="device-row">
                 <div class="device-row-info">
                   <div class="device-row-name">${Utils.escapeHtml(d.name)}</div>
-                  <div class="device-row-meta">${d.maxHeight || 1080}p · ${Utils.formatBitrate(d.maxBitrate)} · ${d.videoCodec} / ${d.audioCodec}</div>
+                  <div class="device-row-meta">${d.maxHeight || 1080}p · ${Utils.formatBitrate(d.maxBitrate)} · ${VideoCodecRegistry.getVideoCodecLabel(d.videoCodec)} / ${(d.audioCodec || 'aac').toUpperCase()}</div>
                 </div>
                 <div class="device-row-actions">
                   <button class="btn btn-ghost btn-sm" data-edit="${d.id}"><i data-lucide="pencil"></i></button>
@@ -212,7 +214,7 @@ const SettingsPage = {
         <div class="form-group">
           <label class="form-label">Video Codec</label>
           <select class="form-select" id="mdVideo">
-            ${['h264','hevc','vp9','av1','mpeg2video','vc1','vp8'].map(c => `<option value="${c}" ${device?.videoCodec === c ? 'selected' : ''}>${c.toUpperCase()}</option>`).join('')}
+            ${VideoCodecRegistry.VIDEO_CODEC_OPTIONS.map(codec => `<option value="${codec.value}" ${VideoCodecRegistry.normalizeVideoCodec(device?.videoCodec) === codec.value ? 'selected' : ''}>${codec.label}</option>`).join('')}
           </select>
         </div>
         <div class="form-group">
@@ -245,8 +247,8 @@ const SettingsPage = {
           <label class="form-label">Max Resolution</label>
           <select class="form-select" id="mdResolution">
             <option value="480" ${device?.maxHeight === 480 ? 'selected' : ''}>480p (SD)</option>
-            <option value="720" ${(!device || device?.maxHeight === 720) ? 'selected' : ''}>720p (HD)</option>
-            <option value="1080" ${device?.maxHeight === 1080 ? 'selected' : ''}>1080p (Full HD)</option>
+            <option value="720" ${device?.maxHeight === 720 ? 'selected' : ''}>720p (HD)</option>
+            <option value="1080" ${(!device || device?.maxHeight === 1080) ? 'selected' : ''}>1080p (Full HD)</option>
             <option value="2160" ${device?.maxHeight === 2160 ? 'selected' : ''}>4K (2160p)</option>
           </select>
         </div>

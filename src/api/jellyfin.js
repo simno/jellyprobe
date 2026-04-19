@@ -1,4 +1,5 @@
 const axios = require('axios');
+const { getVideoTranscodeParams } = require('../shared/video-codecs');
 
 class JellyfinClient {
   constructor(baseUrl, apiKey) {
@@ -192,6 +193,7 @@ class JellyfinClient {
 
     try {
       const userId = await this.getUserId();
+      const videoParams = getVideoTranscodeParams(options.videoCodec);
       
       const params = {
         UserId: userId,
@@ -201,7 +203,9 @@ class JellyfinClient {
         MediaSourceId: itemId,
         MaxStreamingBitrate: options.maxBitrate || 20000000,
         AudioCodec: options.audioCodec || 'aac',
-        VideoCodec: options.videoCodec || 'h264',
+        VideoCodec: videoParams.videoCodec,
+        Profile: videoParams.profile,
+        MaxVideoBitDepth: videoParams.maxVideoBitDepth,
         MaxWidth: options.maxWidth || 1920,
         MaxHeight: options.maxHeight || 1080,
         EnableDirectPlay: false,
@@ -284,10 +288,11 @@ class JellyfinClient {
 
   // Get HLS master playlist URL for video playback (matches how real clients consume media)
   getStreamUrl(itemId, mediaSourceId, deviceId, options = {}) {
+    const videoParams = getVideoTranscodeParams(options.videoCodec);
     const params = new URLSearchParams({
       MediaSourceId: mediaSourceId,
       DeviceId: deviceId,
-      VideoCodec: options.videoCodec || 'h264',
+      VideoCodec: videoParams.videoCodec,
       AudioCodec: options.audioCodec || 'aac',
       MaxStreamingBitrate: String(options.maxBitrate || 20000000),
       VideoBitrate: String(options.maxBitrate || 20000000),
@@ -306,6 +311,13 @@ class JellyfinClient {
       SegmentLength: '3',
       BreakOnNonKeyFrames: 'true'
     });
+
+    if (videoParams.profile) {
+      params.set('Profile', videoParams.profile);
+    }
+    if (videoParams.maxVideoBitDepth) {
+      params.set('MaxVideoBitDepth', String(videoParams.maxVideoBitDepth));
+    }
 
     return `${this.baseUrl}/Videos/${itemId}/master.m3u8?${params.toString()}`;
   }

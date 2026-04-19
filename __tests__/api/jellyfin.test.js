@@ -143,6 +143,37 @@ describe('JellyfinClient', () => {
       expect(url).toContain('VideoCodec=h264');
       expect(url).toContain('MaxStreamingBitrate=10000000');
     });
+
+    test('should normalize extended codec variants to Jellyfin transcode codec families', () => {
+      const url = client.getStreamUrl('item123', 'source456', 'device789', {
+        videoCodec: 'hevc-10bit',
+        audioCodec: 'aac',
+        maxBitrate: 10000000
+      });
+
+      expect(url).toContain('VideoCodec=hevc');
+      expect(url).toContain('Profile=main10');
+      expect(url).toContain('MaxVideoBitDepth=10');
+    });
+
+    test('should include correct Jellyfin parameters for VP9 10-bit and HEVC RExt variants', () => {
+      const vp9Url = client.getStreamUrl('item123', 'source456', 'device789', {
+        videoCodec: 'vp9-10bit',
+        audioCodec: 'aac',
+        maxBitrate: 10000000
+      });
+      const rextUrl = client.getStreamUrl('item123', 'source456', 'device789', {
+        videoCodec: 'hevc-rext-12bit',
+        audioCodec: 'aac',
+        maxBitrate: 10000000
+      });
+
+      expect(vp9Url).toContain('VideoCodec=vp9');
+      expect(vp9Url).toContain('MaxVideoBitDepth=10');
+      expect(rextUrl).toContain('VideoCodec=hevc');
+      expect(rextUrl).toContain('Profile=rext');
+      expect(rextUrl).toContain('MaxVideoBitDepth=12');
+    });
   });
 
   describe('downloadHlsStream', () => {
