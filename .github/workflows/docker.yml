@@ -87,14 +87,16 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Install Trivy
-        env:
-          TRIVY_VERSION: 0.58.1
         run: |
           set -euo pipefail
-          curl -fsSL "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" \
-            -o /tmp/trivy.tar.gz
-          sudo tar -xzf /tmp/trivy.tar.gz -C /usr/local/bin trivy
-          rm /tmp/trivy.tar.gz
+          # Use Trivy's official apt repo — most reliable install path on ubuntu-latest,
+          # no GitHub-release asset-name guessing and no tool-cache download layer to fail.
+          sudo apt-get update
+          sudo apt-get install -y wget gnupg lsb-release
+          wget -qO- https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo gpg --dearmor -o /usr/share/keyrings/trivy.gpg
+          echo "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main" | sudo tee /etc/apt/sources.list.d/trivy.list
+          sudo apt-get update
+          sudo apt-get install -y trivy
           trivy --version
 
       - name: Scan image for vulnerabilities
