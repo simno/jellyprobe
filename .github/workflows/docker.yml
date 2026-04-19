@@ -86,20 +86,31 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      - name: Install Trivy
+        env:
+          TRIVY_VERSION: 0.58.1
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" \
+            -o /tmp/trivy.tar.gz
+          sudo tar -xzf /tmp/trivy.tar.gz -C /usr/local/bin trivy
+          rm /tmp/trivy.tar.gz
+          trivy --version
+
       - name: Scan image for vulnerabilities
         id: trivy
-        uses: aquasecurity/trivy-action@e368e328979b113139d6f9068e03accaed98a518 # v0.34.1
         env:
-          # Authenticate binary download and DB pulls to avoid GitHub/GHCR rate limits
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Authenticate DB pulls from ghcr.io/aquasecurity/trivy-db to avoid anonymous rate limits
           TRIVY_USERNAME: ${{ github.actor }}
           TRIVY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}
-          format: 'sarif'
-          output: 'trivy-results.sarif'
-          severity: 'CRITICAL,HIGH'
-          exit-code: '0'
+        run: |
+          trivy image \
+            --format sarif \
+            --output trivy-results.sarif \
+            --severity CRITICAL,HIGH \
+            --exit-code 0 \
+            --timeout 10m \
+            "${REGISTRY}/${IMAGE_NAME}:${{ steps.meta.outputs.version }}"
 
       - name: Upload Trivy scan results
         uses: github/codeql-action/upload-sarif@89a39a4e59826350b863aa6b6252a07ad50cf83e # v4
