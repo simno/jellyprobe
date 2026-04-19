@@ -1,4 +1,5 @@
 const EventEmitter = require('events');
+const log = require('../utils/logger');
 
 class Scheduler extends EventEmitter {
   constructor(db, jellyfinClient, testRunManager) {
@@ -14,7 +15,7 @@ class Scheduler extends EventEmitter {
     if (this.timer) return;
     this.timer = setInterval(() => this._tick(), 30000);
     this._tick();
-    console.log('[Scheduler] Started');
+    log.info('[Scheduler] Started');
   }
 
   stop() {
@@ -22,7 +23,7 @@ class Scheduler extends EventEmitter {
       clearInterval(this.timer);
       this.timer = null;
     }
-    console.log('[Scheduler] Stopped');
+    log.info('[Scheduler] Stopped');
   }
 
   async _tick() {
@@ -50,18 +51,18 @@ class Scheduler extends EventEmitter {
         }
       }
     } catch (err) {
-      console.error('[Scheduler] Error:', err.message);
+      log.error('[Scheduler] Error:', err.message);
     }
     this.running = false;
   }
 
   async executeSchedule(schedule) {
-    console.log(`[Scheduler] Executing schedule: ${schedule.name}`);
+    log.info(`[Scheduler] Executing schedule: ${schedule.name}`);
     try {
       const allDevices = this.db.getAllDevices();
       const devices = allDevices.filter(d => schedule.deviceIds.includes(d.id));
       if (devices.length === 0) {
-        console.warn(`[Scheduler] No matching devices for schedule ${schedule.id}`);
+        log.warn(`[Scheduler] No matching devices for schedule ${schedule.id}`);
         return;
       }
 
@@ -85,11 +86,11 @@ class Scheduler extends EventEmitter {
       const pad = (n) => String(n).padStart(2, '0');
       const runName = `${schedule.name} — ${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
       const testRun = this.testRunManager.createTestRun(config, runName);
-      console.log(`[Scheduler] Created test run ${testRun.id} for schedule ${schedule.name}`);
+      log.info(`[Scheduler] Created test run ${testRun.id} for schedule ${schedule.name}`);
       await this.testRunManager.startTestRun(testRun.id);
       this.emit('scheduledRunStarted', { scheduleId: schedule.id, testRunId: testRun.id });
     } catch (err) {
-      console.error(`[Scheduler] Failed to execute schedule ${schedule.id}:`, err.message);
+      log.error(`[Scheduler] Failed to execute schedule ${schedule.id}:`, err.message);
     }
   }
 

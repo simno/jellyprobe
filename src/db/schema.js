@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { normalizeVideoCodec } = require('../shared/video-codecs');
+const log = require('../utils/logger');
 
 if (!process.env.ENCRYPTION_KEY && process.env.NODE_ENV === 'production') {
   throw new Error('ENCRYPTION_KEY must be set in production — see README for how to generate one.');
@@ -184,7 +185,7 @@ class DatabaseManager {
     }
 
     if (!hasBytesDownloaded) {
-      console.log('Adding bytesDownloaded column to tests table...');
+      log.info('Adding bytesDownloaded column to tests table...');
       this.db.exec('ALTER TABLE tests ADD COLUMN bytesDownloaded INTEGER DEFAULT 0');
     }
 
@@ -192,7 +193,7 @@ class DatabaseManager {
     const deviceColumns = this.db.pragma('table_info(devices)');
     const hasMaxWidth = deviceColumns.some(col => col.name === 'maxWidth');
     if (!hasMaxWidth) {
-      console.log('Adding maxWidth/maxHeight columns to devices table...');
+      log.info('Adding maxWidth/maxHeight columns to devices table...');
       this.db.exec('ALTER TABLE devices ADD COLUMN maxWidth INTEGER DEFAULT 1920');
       this.db.exec('ALTER TABLE devices ADD COLUMN maxHeight INTEGER DEFAULT 1080');
       // Update existing 720p profiles
@@ -296,7 +297,7 @@ class DatabaseManager {
         );
       }
 
-      console.log(`Initialized ${defaultProfiles.length} default device profiles`);
+      log.info(`Initialized ${defaultProfiles.length} default device profiles`);
     }
   }
 
@@ -322,7 +323,7 @@ class DatabaseManager {
       decrypted += decipher.final('utf8');
       return decrypted;
     } catch (err) {
-      console.error('[WARN] Failed to decrypt value (encryption key may have changed):', err.message);
+      log.warn('Failed to decrypt value (encryption key may have changed):', err.message);
       return '';
     }
   }

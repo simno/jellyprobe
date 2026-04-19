@@ -1,5 +1,6 @@
 const axios = require('axios');
 const { getVideoTranscodeParams } = require('../shared/video-codecs');
+const log = require('../utils/logger');
 
 class JellyfinClient {
   constructor(baseUrl, apiKey) {
@@ -243,7 +244,7 @@ class JellyfinClient {
         headers: { 'X-Emby-Device-Id': deviceId }
       });
     } catch (error) {
-      console.error('Failed to report playback started:', error.message);
+      log.error('Failed to report playback started:', error.message);
     }
   }
 
@@ -262,7 +263,7 @@ class JellyfinClient {
         headers: { 'X-Emby-Device-Id': deviceId }
       });
     } catch (error) {
-      console.error('Failed to report playback progress:', error.message);
+      log.error('Failed to report playback progress:', error.message);
     }
   }
 
@@ -282,7 +283,7 @@ class JellyfinClient {
         }
       });
     } catch (error) {
-      console.error('Failed to stop playback:', error.message);
+      log.error('Failed to stop playback:', error.message);
     }
   }
 
@@ -328,7 +329,7 @@ class JellyfinClient {
     const authHeaders = { 'X-Emby-Token': this.apiKey };
 
     try {
-      console.log(`[HLS] Starting stream validation (${durationSeconds}s)`);
+      log.info(`[HLS] Starting stream validation (${durationSeconds}s)`);
       const masterResp = await axios.get(masterUrl, { timeout: 30000, headers: authHeaders, signal });
       const masterText = masterResp.data;
 
@@ -388,7 +389,7 @@ class JellyfinClient {
             if (!streamingStarted) {
               streamingStarted = true;
               endTime = Date.now() + (durationSeconds * 1000);
-              console.log(`[HLS] First segment received after ${Math.round((Date.now() - startTime) / 1000)}s warmup`);
+              log.info(`[HLS] First segment received after ${Math.round((Date.now() - startTime) / 1000)}s warmup`);
             }
 
             if (onProgress) {
@@ -396,7 +397,7 @@ class JellyfinClient {
               onProgress({ totalBytes, bytesThisSecond: segResp.data.byteLength, elapsedSeconds });
             }
           } catch (e) {
-            console.error(`[HLS] Segment download failed: ${e.message}`);
+            log.error(`[HLS] Segment download failed: ${e.message}`);
           }
         }
 
@@ -413,7 +414,7 @@ class JellyfinClient {
         return { success: false, error: 'No HLS segments downloaded after 60s — transcoding may have failed or is too slow', bytesDownloaded: 0 };
       }
 
-      console.log(`[HLS] Complete: ${downloadedSegments.size} segments, ${totalBytes} bytes`);
+      log.info(`[HLS] Complete: ${downloadedSegments.size} segments, ${totalBytes} bytes`);
       return {
         success: true,
         data: Buffer.alloc(0),
@@ -422,7 +423,7 @@ class JellyfinClient {
         segmentsDownloaded: downloadedSegments.size
       };
     } catch (error) {
-      console.error(`[HLS] Error: ${error.message}`);
+      log.error(`[HLS] Error: ${error.message}`);
       return {
         success: false,
         error: error.message,

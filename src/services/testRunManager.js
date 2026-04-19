@@ -1,4 +1,5 @@
 const EventEmitter = require('events');
+const log = require('../utils/logger');
 
 class TestRunManager extends EventEmitter {
   constructor(db, testRunner, jellyfinClient) {
@@ -57,17 +58,17 @@ class TestRunManager extends EventEmitter {
     const config = this.db.getConfig();
     if (config && config.maxParallelTests) {
       this.testRunner.setMaxParallelTests(config.maxParallelTests);
-      console.log(`Set maxParallelTests to ${config.maxParallelTests}`);
+      log.info(`Set maxParallelTests to ${config.maxParallelTests}`);
     }
 
     const scope = testRun.config.mediaScope;
     const { devices, testConfig, mediaItems } = testRun.config;
 
-    console.log(`[TestRunManager] Starting test run ${runId}:`);
-    console.log(`  - testRun.config keys: ${Object.keys(testRun.config).join(', ')}`);
-    console.log(`  - scope: ${JSON.stringify(scope)}`);
-    console.log(`  - testConfig: ${JSON.stringify(testConfig)}`);
-    console.log(`  - mediaItems: ${Array.isArray(mediaItems) ? mediaItems.length + ' items' : 'undefined/null'}`);
+    log.info(`[TestRunManager] Starting test run ${runId}:`);
+    log.info(`  - testRun.config keys: ${Object.keys(testRun.config).join(', ')}`);
+    log.info(`  - scope: ${JSON.stringify(scope)}`);
+    log.info(`  - testConfig: ${JSON.stringify(testConfig)}`);
+    log.info(`  - mediaItems: ${Array.isArray(mediaItems) ? mediaItems.length + ' items' : 'undefined/null'}`);
 
     try {
       this.emit('testRunStarted', { id: runId });
@@ -75,12 +76,12 @@ class TestRunManager extends EventEmitter {
       // Fetch and queue media items in batches — processing starts as items arrive
       this._queueMediaItemsInBatches(runId, devices, scope, testConfig || {})
         .catch(err => {
-          console.error(`Failed to queue media items for test run ${runId}:`, err.message);
+          log.error(`Failed to queue media items for test run ${runId}:`, err.message);
           this.emit('testRunError', { id: runId, error: err.message });
         });
 
     } catch (err) {
-      console.error(`Failed to start test run ${runId}:`, err.message);
+      log.error(`Failed to start test run ${runId}:`, err.message);
       this.db.updateTestRun(runId, { status: 'failed', completedAt: new Date().toISOString() });
       this.emit('testRunError', { id: runId, error: err.message });
       throw err;
@@ -94,7 +95,7 @@ class TestRunManager extends EventEmitter {
     let totalQueued = 0;
 
     try {
-      console.log(`[TestRunManager] Queueing media: scope=${JSON.stringify(scope)}, devices=${devices.length}`);
+      log.info(`[TestRunManager] Queueing media: scope=${JSON.stringify(scope)}, devices=${devices.length}`);
 
       if (scope && scope.type === 'all') {
         for (const libId of scope.libraryIds) {
@@ -134,7 +135,7 @@ class TestRunManager extends EventEmitter {
             const item = await this.jellyfinClient.getItem(itemId);
             if (item) items.push(item);
           } catch (e) {
-            console.warn(`[TestRunManager] Failed to fetch item ${itemId}: ${e.message}`);
+            log.warn(`[TestRunManager] Failed to fetch item ${itemId}: ${e.message}`);
           }
         }
         if (items.length > 0) {
@@ -147,19 +148,19 @@ class TestRunManager extends EventEmitter {
       if (totalQueued === 0) {
         const testRun = this.db.getTestRun(runId);
         if (testRun && testRun.config.mediaItems && testRun.config.mediaItems.length > 0) {
-          console.log(`[TestRunManager] Using mediaItems fallback: ${testRun.config.mediaItems.length} items`);
+          log.info(`[TestRunManager] Using mediaItems fallback: ${testRun.config.mediaItems.length} items`);
           totalQueued += this._queueTestBatch(runId, devices, testRun.config.mediaItems, testConfig);
           this.testRunner.processQueue();
         } else {
-          console.warn(`[TestRunManager] No items resolved for run ${runId} (scope=${JSON.stringify(scope)})`);
+          log.warn(`[TestRunManager] No items resolved for run ${runId} (scope=${JSON.stringify(scope)})`);
         }
       }
 
-      console.log(`[TestRunManager] Total queued tests: ${totalQueued}`);
+      log.info(`[TestRunManager] Total queued tests: ${totalQueued}`);
 
       // If no media items were found, complete the run immediately
       if (totalQueued === 0) {
-        console.log(`[TestRunManager] No media to process for run ${runId}, marking as completed`);
+        log.info(`[TestRunManager] No media to process for run ${runId}, marking as completed`);
         this.db.updateTestRun(runId, {
           status: 'completed',
           totalTests: 0,
@@ -178,7 +179,7 @@ class TestRunManager extends EventEmitter {
         this.db.updateTestRun(runId, { totalTests: totalQueued });
       }
     } catch (err) {
-      console.error(`[TestRunManager] Error queuing media for run ${runId}: ${err.message}`);
+      log.error(`[TestRunManager] Error queuing media for run ${runId}: ${err.message}`);
       throw err;
     }
   }

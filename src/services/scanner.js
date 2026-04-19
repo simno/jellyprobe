@@ -1,5 +1,6 @@
 const cron = require('node-cron');
 const EventEmitter = require('events');
+const log = require('../utils/logger');
 
 class LibraryScanner extends EventEmitter {
   constructor(jellyfinClient, db) {
@@ -16,7 +17,7 @@ class LibraryScanner extends EventEmitter {
     const libraryIds = config.scanLibraryIds ? JSON.parse(config.scanLibraryIds) : [];
     
     if (libraryIds.length === 0 || !config.scanInterval) {
-      console.log('Scanner not started: missing configuration');
+      log.info('Scanner not started: missing configuration');
       return;
     }
 
@@ -27,8 +28,8 @@ class LibraryScanner extends EventEmitter {
     const intervalMinutes = Math.max(1, Math.floor(config.scanInterval / 60));
     const cronExpression = `*/${intervalMinutes} * * * *`;
 
-    console.log(`Starting scanner with interval: ${intervalMinutes} minutes`);
-    console.log(`Monitoring ${libraryIds.length} libraries: ${libraryIds.join(', ')}`);
+    log.info(`Starting scanner with interval: ${intervalMinutes} minutes`);
+    log.info(`Monitoring ${libraryIds.length} libraries: ${libraryIds.join(', ')}`);
 
     this.cronJob = cron.schedule(cronExpression, async () => {
       await this.scan();
@@ -46,7 +47,7 @@ class LibraryScanner extends EventEmitter {
 
   async scan() {
     if (this.isScanning) {
-      console.log('Scan already in progress, skipping');
+      log.info('Scan already in progress, skipping');
       return;
     }
 
@@ -60,18 +61,18 @@ class LibraryScanner extends EventEmitter {
       const libraryIds = config.scanLibraryIds ? JSON.parse(config.scanLibraryIds) : [];
       
       if (libraryIds.length === 0) {
-        console.log('No libraries configured, skipping scan');
+        log.info('No libraries configured, skipping scan');
         return;
       }
 
       const lastScanTime = scanState?.lastScanTime || new Date(0).toISOString();
       
-      console.log(`Scanning ${libraryIds.length} libraries for items since ${lastScanTime}`);
+      log.info(`Scanning ${libraryIds.length} libraries for items since ${lastScanTime}`);
 
       const scanPromises = libraryIds.map(libraryId => 
         this.jellyfinClient.getNewItems(libraryId, lastScanTime)
           .catch(err => {
-            console.error(`Error scanning library ${libraryId}:`, err.message);
+            log.error(`Error scanning library ${libraryId}:`, err.message);
             return [];
           })
       );
@@ -79,13 +80,13 @@ class LibraryScanner extends EventEmitter {
       const results = await Promise.all(scanPromises);
       const newItems = results.flat();
 
-      console.log(`Found ${newItems.length} new items across all libraries`);
+      log.info(`Found ${newItems.length} new items across all libraries`);
 
       this.emit('scanCompleted', { itemsFound: newItems.length });
       this.db.updateScanState(new Date().toISOString(), newItems.length);
 
     } catch (error) {
-      console.error('Scan error:', error.message);
+      log.error('Scan error:', error.message);
       this.emit('scanError', error);
     } finally {
       this.isScanning = false;
