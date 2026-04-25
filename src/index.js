@@ -126,6 +126,24 @@ if (config?.jellyfinUrl && config?.apiKey && libraryIds.length > 0) {
   scanner.start();
 }
 
+// Recover any test runs left in a non-terminal state from a previous process
+// (e.g. server restart while a run was active). Without this, the history view
+// shows them as 'running' forever.
+try {
+  const orphans = db.getAllTestRuns(200).filter(r =>
+    r.status === 'running' || r.status === 'paused' || r.status === 'pending'
+  );
+  for (const r of orphans) {
+    db.updateTestRun(r.id, {
+      status: 'cancelled',
+      completedAt: new Date().toISOString()
+    });
+    log.info(`[Startup] Recovered orphaned test run ${r.id} (was ${r.status}) → cancelled`);
+  }
+} catch (err) {
+  log.error('[Startup] Failed to recover orphaned test runs:', err.message);
+}
+
 scheduler.start();
 
 if (config?.maxParallelTests) {

@@ -134,7 +134,7 @@ class JellyfinClient {
         ParentId: libraryId,
         IncludeItemTypes: 'Movie,Episode,Video',
         Recursive: true,
-        Fields: 'Path,MediaSources,Overview,RunTimeTicks,DateCreated',
+        Fields: 'Path,MediaSources,Overview,RunTimeTicks,DateCreated,DateLastSaved,PremiereDate',
         SortBy: 'DateCreated',
         SortOrder: 'Descending',
         Filters: 'IsNotFolder',
@@ -143,12 +143,21 @@ class JellyfinClient {
       };
 
       const response = await this.client.get('/Items', { params });
-      
-      // Jellyfin's TotalRecordCount doesn't respect MinDateCreated filter  
+
+      // Jellyfin's MinDateCreated filter is unreliable: TotalRecordCount
+      // ignores it, and DateCreated itself can be bumped to "now" by a
+      // library rescan / metadata refresh, making genuinely-old items look
+      // recent. Use the *earliest* of DateCreated and DateLastSaved as a
+      // proxy for "when this item first appeared" so re-scanned items don't
+      // leak through.
       const recentItems = (response.data.Items || []).filter(item => {
-        if (!item.DateCreated) return false;
-        const itemDate = new Date(item.DateCreated);
-        return itemDate >= cutoffDate;
+        const candidates = [item.DateCreated, item.DateLastSaved]
+          .filter(Boolean)
+          .map(d => new Date(d).getTime())
+          .filter(t => Number.isFinite(t));
+        if (candidates.length === 0) return false;
+        const earliest = Math.min(...candidates);
+        return earliest >= cutoffDate.getTime();
       });
       
       return {

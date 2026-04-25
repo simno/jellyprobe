@@ -77,7 +77,19 @@ class TestRunManager extends EventEmitter {
       this._queueMediaItemsInBatches(runId, devices, scope, testConfig || {})
         .catch(err => {
           log.error(`Failed to queue media items for test run ${runId}:`, err.message);
+          // Don't leave the run stuck in 'running' — mark as failed so the
+          // history view reflects the terminal state.
+          try {
+            this.db.updateTestRun(runId, {
+              status: 'failed',
+              completedAt: new Date().toISOString()
+            });
+          } catch (updateErr) {
+            log.error(`Failed to mark run ${runId} as failed:`, updateErr.message);
+          }
+          if (this.currentRunId === runId) this.currentRunId = null;
           this.emit('testRunError', { id: runId, error: err.message });
+          this.emit('testRunCompleted', { id: runId });
         });
 
     } catch (err) {
