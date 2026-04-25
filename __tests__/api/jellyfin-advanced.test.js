@@ -210,7 +210,7 @@ describe('JellyfinClient - Advanced', () => {
     });
 
     test('should handle various video codecs', () => {
-      const videoCodecs = ['h264', 'hevc', 'vp9', 'av1', 'mpeg2video', 'vc1'];
+      const videoCodecs = ['h264', 'hevc', 'vp9', 'av1', 'mpeg2video', 'hevc-10bit', 'vp9-10bit', 'hevc-rext-8-10bit', 'hevc-rext-12bit', 'vc1', 'vp8'];
       videoCodecs.forEach(codec => {
         const device = { videoCodec: codec };
         expect(device.videoCodec).toBe(codec);

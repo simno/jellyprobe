@@ -95,6 +95,21 @@ describe('DatabaseManager - Advanced', () => {
       expect(updatedDevice.name).toBe('Updated Device');
     });
 
+    test('should normalize extended codec variants when saving devices', () => {
+      const result = db.addDevice({
+        name: 'HEVC RExt Device',
+        deviceId: 'dev-rext-test',
+        videoCodec: 'HEVC RExt 12bit',
+        audioCodec: 'aac',
+        maxBitrate: 20000000,
+        maxWidth: 1920,
+        maxHeight: 1080
+      });
+
+      const savedDevice = db.getDevice(result.lastInsertRowid);
+      expect(savedDevice.videoCodec).toBe('hevc-rext-12bit');
+    });
+
     test('should delete device and verify it is removed', () => {
       const device = {
         name: 'Device to Delete',

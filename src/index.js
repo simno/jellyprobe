@@ -10,6 +10,10 @@ const TestRunner = require('./services/testRunner');
 const LibraryScanner = require('./services/scanner');
 const TestRunManager = require('./services/testRunManager');
 const Scheduler = require('./services/scheduler');
+const { normalizeVideoCodec } = require('./shared/video-codecs');
+const log = require('./utils/logger');
+
+const VIDEO_CODECS_FILE = path.join(__dirname, 'shared/video-codecs.js');
 
 const app = express();
 const server = http.createServer(app);
@@ -33,18 +37,28 @@ app.use((_req, res, next) => {
 const ALLOWED_PROXY_PREFIXES = ['/Videos/', '/Audio/'];
 
 app.use('/jf', async (req, res) => {
+  let upstream;
   try {
-    // SSRF protection: normalize the path to prevent double-encoding and traversal bypasses
+    // SSRF protection: decode then normalize to block both traversal and percent-encoded bypasses
     const parsedPath = new URL(req.url, 'http://localhost').pathname;
-    const normalizedPath = path.posix.normalize(parsedPath);
-    if (!ALLOWED_PROXY_PREFIXES.some(p => normalizedPath.startsWith(p))) {
+    let decodedPath;
+    try {
+      decodedPath = decodeURIComponent(parsedPath);
+    } catch (_e) {
+      return res.status(400).json({ error: 'Malformed proxy path' });
+    }
+    const normalizedPath = path.posix.normalize(decodedPath);
+    if (normalizedPath.includes('..') ||
+        !ALLOWED_PROXY_PREFIXES.some(p => normalizedPath.startsWith(p))) {
       return res.status(403).json({ error: 'Forbidden proxy path' });
     }
 
     const targetUrl = `${jellyfinClient.baseUrl}${req.url}`;
-    const upstream = await axios.get(targetUrl, {
-      responseType: 'arraybuffer',
+    upstream = await axios.get(targetUrl, {
+      responseType: 'stream',
       timeout: 30000,
+      // Accept any status so the upstream response is surfaced to the client instead of thrown
+      validateStatus: () => true,
       headers: {
         'X-Emby-Token': jellyfinClient.apiKey,
         ...(req.headers.range ? { Range: req.headers.range } : {})
@@ -52,18 +66,33 @@ app.use('/jf', async (req, res) => {
     });
 
     const ct = upstream.headers['content-type'] || 'application/octet-stream';
+    res.status(upstream.status || 200);
     res.setHeader('Content-Type', ct);
-    if (upstream.headers['content-length']) res.setHeader('Content-Length', upstream.headers['content-length']);
     if (upstream.headers['content-range']) res.setHeader('Content-Range', upstream.headers['content-range']);
+    if (upstream.headers['accept-ranges']) res.setHeader('Accept-Ranges', upstream.headers['accept-ranges']);
 
-    if (ct.includes('mpegurl') || ct.includes('x-mpegURL')) {
-      let body = Buffer.from(upstream.data).toString('utf-8');
-      body = body.replace(/^(\/[^#\s].*$)/gm, '/jf$1');
-      res.send(body);
-    } else {
-      res.status(upstream.status || 200).send(Buffer.from(upstream.data));
+    const isPlaylist = ct.includes('mpegurl') || ct.includes('x-mpegURL');
+
+    if (isPlaylist) {
+      // Playlists are small text — buffer, rewrite absolute paths through /jf, then send
+      const chunks = [];
+      for await (const chunk of upstream.data) chunks.push(chunk);
+      const body = Buffer.concat(chunks).toString('utf-8').replace(/^(\/[^#\s].*$)/gm, '/jf$1');
+      return res.send(body);
     }
+
+    // Binary media (segments, etc.) — pipe directly so memory stays flat under parallel tests
+    if (upstream.headers['content-length']) res.setHeader('Content-Length', upstream.headers['content-length']);
+    upstream.data.on('error', (err) => {
+      log.error('Proxy upstream stream error:', err.message);
+      if (!res.headersSent) res.status(502).json({ error: 'Proxy stream failed' });
+      else res.destroy(err);
+    });
+    req.on('close', () => upstream.data.destroy());
+    upstream.data.pipe(res);
   } catch (error) {
+    log.error('Proxy request failed:', error.message);
+    if (upstream?.data?.destroy) upstream.data.destroy();
     if (!res.headersSent) {
       res.status(error.response?.status || 502).json({ error: 'Proxy request failed' });
     }
@@ -72,6 +101,14 @@ app.use('/jf', async (req, res) => {
 
 app.use(express.json({ limit: '5mb' }));
 app.use(express.urlencoded({ limit: '5mb', extended: true }));
+
+// Shared codec registry lives under src/ but the browser needs it too — serve it explicitly
+// so the backend doesn't have to reach into public/ for its require path.
+app.get('/js/video-codecs.js', (_req, res) => {
+  res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+  res.sendFile(VIDEO_CODECS_FILE);
+});
+
 app.use(express.static(path.join(__dirname, '../public')));
 
 const db = new DatabaseManager(path.join(DATA_PATH, 'jellyprobe.db'));
@@ -87,6 +124,24 @@ const scheduler = new Scheduler(db, jellyfinClient, testRunManager);
 const libraryIds = config?.scanLibraryIds ? JSON.parse(config.scanLibraryIds) : [];
 if (config?.jellyfinUrl && config?.apiKey && libraryIds.length > 0) {
   scanner.start();
+}
+
+// Recover any test runs left in a non-terminal state from a previous process
+// (e.g. server restart while a run was active). Without this, the history view
+// shows them as 'running' forever.
+try {
+  const orphans = db.getAllTestRuns(200).filter(r =>
+    r.status === 'running' || r.status === 'paused' || r.status === 'pending'
+  );
+  for (const r of orphans) {
+    db.updateTestRun(r.id, {
+      status: 'cancelled',
+      completedAt: new Date().toISOString()
+    });
+    log.info(`[Startup] Recovered orphaned test run ${r.id} (was ${r.status}) → cancelled`);
+  }
+} catch (err) {
+  log.error('[Startup] Failed to recover orphaned test runs:', err.message);
 }
 
 scheduler.start();
@@ -108,8 +163,11 @@ wss.on('connection', (ws) => {
 function broadcast(event, data) {
   const message = JSON.stringify({ event, data });
   clients.forEach(client => {
-    if (client.readyState === WebSocket.OPEN) {
+    if (client.readyState !== WebSocket.OPEN) return;
+    try {
       client.send(message);
+    } catch (err) {
+      log.error('WebSocket send failed:', err);
     }
   });
 }
@@ -124,14 +182,14 @@ testRunner.on('testCompleted', (data) => {
       testRunManager.onTestComplete(data);
     }
   } catch (err) {
-    console.error('Error updating test run progress:', err);
+    log.error('Error updating test run progress:', err);
   }
 
   // Broadcast the completion to connected clients; guard against broadcast errors so they don't affect server-side state
   try {
     broadcast('testCompleted', data);
   } catch (err) {
-    console.error('Failed to broadcast testCompleted event:', err);
+    log.error('Failed to broadcast testCompleted event:', err);
   }
 });
 testRunner.on('testStreamEnding', (data) => broadcast('testStreamEnding', data));
@@ -263,7 +321,10 @@ app.get('/api/devices', (req, res) => {
 
 app.post('/api/devices', (req, res) => {
   try {
-    const device = req.body;
+    const device = {
+      ...req.body,
+      videoCodec: normalizeVideoCodec(req.body?.videoCodec)
+    };
     if (!device || !device.name || !device.deviceId) {
       return res.status(400).json({ error: 'Name and deviceId are required' });
     }
@@ -280,6 +341,9 @@ app.put('/api/devices/:id', (req, res) => {
     if (isNaN(id)) return res.status(400).json({ error: 'Invalid device ID' });
     const updates = req.body;
     if (!updates || typeof updates !== 'object') return res.status(400).json({ error: 'Invalid request body' });
+    if (Object.hasOwn(updates, 'videoCodec')) {
+      updates.videoCodec = normalizeVideoCodec(updates.videoCodec);
+    }
     db.updateDevice(id, updates);
     res.json({ success: true });
   } catch (_error) {
@@ -392,7 +456,7 @@ app.post('/api/test-runs', (req, res) => {
   try {
     const { devices, mediaItems, mediaScope, testConfig, totalTests } = req.body;
 
-    console.log(`[API] POST /api/test-runs: received mediaScope=${JSON.stringify(mediaScope)}, testConfig=${JSON.stringify(testConfig)}, mediaItems=${Array.isArray(mediaItems) ? mediaItems.length : 'undefined'}`);
+    log.debug(`POST /api/test-runs: mediaScope=${JSON.stringify(mediaScope)}, testConfig=${JSON.stringify(testConfig)}, mediaItems=${Array.isArray(mediaItems) ? mediaItems.length : 'undefined'}`);
 
     if (!devices || !Array.isArray(devices) || devices.length === 0) {
       return res.status(400).json({ error: 'At least one device is required' });
@@ -422,7 +486,7 @@ app.post('/api/test-runs', (req, res) => {
       totalTests: computedTotalTests
     };
 
-    console.log(`[API] Creating test run with config keys: ${Object.keys(config).join(', ')}`);
+    log.debug(`Creating test run with config keys: ${Object.keys(config).join(', ')}`);
 
     const testRun = testRunManager.createTestRun(config);
     res.json({ success: true, testRun });
@@ -623,7 +687,7 @@ app.get('/api/stream/:itemId', async (req, res) => {
 
     const masterUrl = jellyfinClient.getStreamUrl(itemId, mediaSourceId, deviceId, {
       playSessionId: playSessionId || '',
-      videoCodec: videoCodec || 'h264',
+      videoCodec: normalizeVideoCodec(videoCodec),
       audioCodec: audioCodec || 'aac',
       maxBitrate: Math.min(parseInt(maxBitrate) || 20000000, 100000000),
       maxWidth: Math.min(parseInt(maxWidth) || 1920, 3840),
@@ -672,7 +736,7 @@ let isShuttingDown = false;
 async function gracefulShutdown(signal) {
   if (isShuttingDown) return;
   isShuttingDown = true;
-  console.log(`${signal} received, shutting down gracefully...`);
+  log.info(`${signal} received, shutting down gracefully...`);
 
   // 1. Stop accepting new work and await in-flight test cleanup (including stopPlayback calls)
   await testRunner.stop();
@@ -681,14 +745,14 @@ async function gracefulShutdown(signal) {
 
   // 2. Close HTTP server (stops new connections), then close DB last
   server.close(() => {
-    console.log('Server closed');
+    log.info('Server closed');
     db.close();
     process.exit(0);
   });
 
   // Force exit if server.close hangs
   setTimeout(() => {
-    console.error('Shutdown timed out, forcing exit');
+    log.error('Shutdown timed out, forcing exit');
     db.close();
     process.exit(1);
   }, 10000);
@@ -698,7 +762,7 @@ process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
 server.listen(PORT, () => {
-  console.log(`JellyProbe server running on port ${PORT}`);
-  console.log(`Dashboard: http://localhost:${PORT}`);
-  console.log(`Health check: http://localhost:${PORT}/health`);
+  log.info(`JellyProbe server running on port ${PORT}`);
+  log.info(`Dashboard: http://localhost:${PORT}`);
+  log.info(`Health check: http://localhost:${PORT}/health`);
 });

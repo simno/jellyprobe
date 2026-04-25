@@ -100,7 +100,7 @@ Create a new device profile.
 {
   "name": "Smart TV - 4K HEVC",
   "deviceId": "jellyprobe-tv-4k",
-  "videoCodec": "hevc",
+  "videoCodec": "hevc-10bit",
   "audioCodec": "aac",
   "maxBitrate": 80000000,
   "maxWidth": 3840,
@@ -279,7 +279,7 @@ HLS stream entry point for live preview. Returns a rewritten `master.m3u8` playl
 | `mediaSourceId` | string | yes      | Jellyfin media source |
 | `deviceId`      | string | yes      | Device identifier     |
 | `playSessionId` | string | no       | Play session ID       |
-| `videoCodec`    | string | no       | Default: `h264`       |
+| `videoCodec`    | string | no       | Device codec profile, e.g. `h264`, `hevc-10bit`, `vp9-10bit` |
 | `audioCodec`    | string | no       | Default: `aac`        |
 | `maxBitrate`    | number | no       | Default: 20000000     |
 | `maxWidth`      | number | no       | Default: 1920         |

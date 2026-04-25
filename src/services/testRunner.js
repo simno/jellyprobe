@@ -1,4 +1,5 @@
 const EventEmitter = require('events');
+const log = require('../utils/logger');
 
 // Spread/jitter range values (ms)
 const MIN_SPREAD_MS = 500; // min 0.5s
@@ -123,7 +124,7 @@ class TestRunner extends EventEmitter {
 
   setMaxParallelTests(max) {
     this.maxParallelTests = Math.max(1, Math.min(10, max));
-    console.log(`[TestRunner] maxParallelTests set to ${this.maxParallelTests} (requested: ${max})`);
+    log.info(`[TestRunner] maxParallelTests set to ${this.maxParallelTests} (requested: ${max})`);
   }
 
   // Helper: clear scheduled start timers. If returnToQueue=true, push tests back to front of queue
@@ -372,7 +373,7 @@ class TestRunner extends EventEmitter {
         testObj.itemId, playSessionId, mediaSource.Id, deviceIdForPlayback
       );
 
-      console.log(`[TestRunner] Running test: itemId=${testObj.itemId}, testDuration=${testDuration}, testConfig=${JSON.stringify(testObj.testConfig)}`);
+      log.info(`[TestRunner] Running test: itemId=${testObj.itemId}, testDuration=${testDuration}, testConfig=${JSON.stringify(testObj.testConfig)}`);
 
       this.emit('testProgress', {
         ...testResult,
@@ -471,7 +472,7 @@ class TestRunner extends EventEmitter {
     try {
       this.db.addTestResult(testResult);
     } catch (dbErr) {
-      console.error('[TestRunner] Failed to save test result:', dbErr.message);
+      log.error('[TestRunner] Failed to save test result:', dbErr.message);
     }
     this.emit('testCompleted', testResult);
 
