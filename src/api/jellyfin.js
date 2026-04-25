@@ -1,4 +1,6 @@
 const axios = require('axios');
+const { getVideoTranscodeParams } = require('../shared/video-codecs');
+const log = require('../utils/logger');
 
 class JellyfinClient {
   constructor(baseUrl, apiKey) {
@@ -132,7 +134,7 @@ class JellyfinClient {
         ParentId: libraryId,
         IncludeItemTypes: 'Movie,Episode,Video',
         Recursive: true,
-        Fields: 'Path,MediaSources,Overview,RunTimeTicks,DateCreated',
+        Fields: 'Path,MediaSources,Overview,RunTimeTicks,DateCreated,DateLastSaved,PremiereDate',
         SortBy: 'DateCreated',
         SortOrder: 'Descending',
         Filters: 'IsNotFolder',
@@ -141,12 +143,21 @@ class JellyfinClient {
       };
 
       const response = await this.client.get('/Items', { params });
-      
-      // Jellyfin's TotalRecordCount doesn't respect MinDateCreated filter  
+
+      // Jellyfin's MinDateCreated filter is unreliable: TotalRecordCount
+      // ignores it, and DateCreated itself can be bumped to "now" by a
+      // library rescan / metadata refresh, making genuinely-old items look
+      // recent. Use the *earliest* of DateCreated and DateLastSaved as a
+      // proxy for "when this item first appeared" so re-scanned items don't
+      // leak through.
       const recentItems = (response.data.Items || []).filter(item => {
-        if (!item.DateCreated) return false;
-        const itemDate = new Date(item.DateCreated);
-        return itemDate >= cutoffDate;
+        const candidates = [item.DateCreated, item.DateLastSaved]
+          .filter(Boolean)
+          .map(d => new Date(d).getTime())
+          .filter(t => Number.isFinite(t));
+        if (candidates.length === 0) return false;
+        const earliest = Math.min(...candidates);
+        return earliest >= cutoffDate.getTime();
       });
       
       return {
@@ -192,6 +203,7 @@ class JellyfinClient {
 
     try {
       const userId = await this.getUserId();
+      const videoParams = getVideoTranscodeParams(options.videoCodec);
       
       const params = {
         UserId: userId,
@@ -201,7 +213,9 @@ class JellyfinClient {
         MediaSourceId: itemId,
         MaxStreamingBitrate: options.maxBitrate || 20000000,
         AudioCodec: options.audioCodec || 'aac',
-        VideoCodec: options.videoCodec || 'h264',
+        VideoCodec: videoParams.videoCodec,
+        Profile: videoParams.profile,
+        MaxVideoBitDepth: videoParams.maxVideoBitDepth,
         MaxWidth: options.maxWidth || 1920,
         MaxHeight: options.maxHeight || 1080,
         EnableDirectPlay: false,
@@ -239,7 +253,7 @@ class JellyfinClient {
         headers: { 'X-Emby-Device-Id': deviceId }
       });
     } catch (error) {
-      console.error('Failed to report playback started:', error.message);
+      log.error('Failed to report playback started:', error.message);
     }
   }
 
@@ -258,7 +272,7 @@ class JellyfinClient {
         headers: { 'X-Emby-Device-Id': deviceId }
       });
     } catch (error) {
-      console.error('Failed to report playback progress:', error.message);
+      log.error('Failed to report playback progress:', error.message);
     }
   }
 
@@ -278,16 +292,17 @@ class JellyfinClient {
         }
       });
     } catch (error) {
-      console.error('Failed to stop playback:', error.message);
+      log.error('Failed to stop playback:', error.message);
     }
   }
 
   // Get HLS master playlist URL for video playback (matches how real clients consume media)
   getStreamUrl(itemId, mediaSourceId, deviceId, options = {}) {
+    const videoParams = getVideoTranscodeParams(options.videoCodec);
     const params = new URLSearchParams({
       MediaSourceId: mediaSourceId,
       DeviceId: deviceId,
-      VideoCodec: options.videoCodec || 'h264',
+      VideoCodec: videoParams.videoCodec,
       AudioCodec: options.audioCodec || 'aac',
       MaxStreamingBitrate: String(options.maxBitrate || 20000000),
       VideoBitrate: String(options.maxBitrate || 20000000),
@@ -307,6 +322,13 @@ class JellyfinClient {
       BreakOnNonKeyFrames: 'true'
     });
 
+    if (videoParams.profile) {
+      params.set('Profile', videoParams.profile);
+    }
+    if (videoParams.maxVideoBitDepth) {
+      params.set('MaxVideoBitDepth', String(videoParams.maxVideoBitDepth));
+    }
+
     return `${this.baseUrl}/Videos/${itemId}/master.m3u8?${params.toString()}`;
   }
 
@@ -316,7 +338,7 @@ class JellyfinClient {
     const authHeaders = { 'X-Emby-Token': this.apiKey };
 
     try {
-      console.log(`[HLS] Starting stream validation (${durationSeconds}s)`);
+      log.info(`[HLS] Starting stream validation (${durationSeconds}s)`);
       const masterResp = await axios.get(masterUrl, { timeout: 30000, headers: authHeaders, signal });
       const masterText = masterResp.data;
 
@@ -376,7 +398,7 @@ class JellyfinClient {
             if (!streamingStarted) {
               streamingStarted = true;
               endTime = Date.now() + (durationSeconds * 1000);
-              console.log(`[HLS] First segment received after ${Math.round((Date.now() - startTime) / 1000)}s warmup`);
+              log.info(`[HLS] First segment received after ${Math.round((Date.now() - startTime) / 1000)}s warmup`);
             }
 
             if (onProgress) {
@@ -384,7 +406,7 @@ class JellyfinClient {
               onProgress({ totalBytes, bytesThisSecond: segResp.data.byteLength, elapsedSeconds });
             }
           } catch (e) {
-            console.error(`[HLS] Segment download failed: ${e.message}`);
+            log.error(`[HLS] Segment download failed: ${e.message}`);
           }
         }
 
@@ -401,7 +423,7 @@ class JellyfinClient {
         return { success: false, error: 'No HLS segments downloaded after 60s — transcoding may have failed or is too slow', bytesDownloaded: 0 };
       }
 
-      console.log(`[HLS] Complete: ${downloadedSegments.size} segments, ${totalBytes} bytes`);
+      log.info(`[HLS] Complete: ${downloadedSegments.size} segments, ${totalBytes} bytes`);
       return {
         success: true,
         data: Buffer.alloc(0),
@@ -410,7 +432,7 @@ class JellyfinClient {
         segmentsDownloaded: downloadedSegments.size
       };
     } catch (error) {
-      console.error(`[HLS] Error: ${error.message}`);
+      log.error(`[HLS] Error: ${error.message}`);
       return {
         success: false,
         error: error.message,

@@ -1,3 +1,5 @@
+/* global VideoCodecRegistry */
+
 const WizardPage = {
   _step: 1,
   _configuredLibs: [],
@@ -95,7 +97,7 @@ const WizardPage = {
             <div class="select-card-title">${Utils.escapeHtml(d.name)}</div>
             <div class="select-card-meta">
               <span><i data-lucide="gauge"></i> ${Utils.formatBitrate(d.maxBitrate)}</span>
-              <span><i data-lucide="film"></i> ${d.videoCodec} / ${d.audioCodec}</span>
+              <span><i data-lucide="film"></i> ${VideoCodecRegistry.getVideoCodecLabel(d.videoCodec)} / ${(d.audioCodec || 'aac').toUpperCase()}</span>
             </div>
           </div>`;
   }).join('')}
