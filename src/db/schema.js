@@ -488,6 +488,22 @@ class DatabaseManager {
     });
   }
 
+  // Atomically transitions every non-terminal test run to 'cancelled'.
+  // Used at startup to recover runs left in-flight from a previous process.
+  // Returns the ids that were updated so the caller can log them.
+  cancelOrphanedTestRuns(completedAt = new Date().toISOString()) {
+    const orphans = this.db.prepare(`
+      SELECT id, status FROM test_runs WHERE status IN ('running', 'paused', 'pending')
+    `).all();
+    if (orphans.length === 0) return [];
+    this.db.prepare(`
+      UPDATE test_runs
+         SET status = 'cancelled', completedAt = ?
+       WHERE status IN ('running', 'paused', 'pending')
+    `).run(completedAt);
+    return orphans;
+  }
+
   getActiveTestRun() {
     const run = this.db.prepare(`
       SELECT * FROM test_runs 

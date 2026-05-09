@@ -1,9 +1,7 @@
-/* global Chart, VideoCodecRegistry */
+/* global DashboardPreviewGrid, DashboardBwChart, Chart */
 
 const DashboardPage = {
   _pollTimer: null,
-  _bwChart: null,
-  _bwTotalBytes: 0,
   _pieChart: null,
   _wsHandlers: [],
 
@@ -115,8 +113,8 @@ const DashboardPage = {
     if (isFinished) {
       this._showCompletedView(run);
     } else {
-      this._initPreviewSlots(run);
-      this._initBwChart();
+      DashboardPreviewGrid.init();
+      DashboardBwChart.init();
       this._loadResults(run.id);
       this._startPolling(run.id);
     }
@@ -171,8 +169,8 @@ const DashboardPage = {
       Store.set('currentTestRun', r);
       this._updateUI(r);
       this._stopPolling();
-      this._clearPreviews();
-      this._destroyBwChart();
+      DashboardPreviewGrid.clear();
+      DashboardBwChart.destroy();
       this._showCompletedView(r);
     });
 
@@ -204,8 +202,8 @@ const DashboardPage = {
       Store.set('currentTestRun', r);
       this._updateUI(r);
       this._stopPolling();
-      this._clearPreviews();
-      this._destroyBwChart();
+      DashboardPreviewGrid.clear();
+      DashboardBwChart.destroy();
       this._showCompletedView(r);
     });
 
@@ -214,7 +212,7 @@ const DashboardPage = {
       const status = d.success ? 'success' : 'error';
       this._addLog(`${d.itemName || 'Unknown'} — ${d.success ? 'passed' : 'FAILED'}`, status);
       this._loadResults(runId);
-      this._removePreview(d.itemId, d.deviceId);
+      DashboardPreviewGrid.remove(d.itemId, d.deviceId);
     });
 
     this._wsOn('testProgress', (d) => {
@@ -224,19 +222,19 @@ const DashboardPage = {
 
     this._wsOn('testStreamEnding', (d) => {
       if (d.testRunId !== runId) return;
-      this._removePreview(d.itemId, d.deviceId);
+      DashboardPreviewGrid.remove(d.itemId, d.deviceId);
     });
 
     this._wsOn('testStreamReady', (d) => {
       if (d.testRunId !== runId) return;
       const config = Store.get('config');
       if (config?.showPreviews === 0) return;
-      this._addPreview(d);
+      DashboardPreviewGrid.add(d);
     });
 
     this._wsOn('bandwidthUpdate', (d) => {
       if (d.testRunId !== runId) return;
-      this._onBandwidthUpdate(d);
+      DashboardBwChart.update(d);
     });
   },
 
@@ -311,8 +309,8 @@ const DashboardPage = {
         this._loadResults(runId);
         if (fresh.status === 'completed' || fresh.status === 'cancelled') {
           this._stopPolling();
-          this._clearPreviews();
-          this._destroyBwChart();
+          DashboardPreviewGrid.clear();
+          DashboardBwChart.destroy();
           this._showCompletedView(r);
         }
       } catch (_e) { /* ignore poll errors */ }
@@ -326,8 +324,8 @@ const DashboardPage = {
   _prepareForActiveRun() {
     this._stopPolling();
     this._destroyPieChart();
-    this._clearPreviews();
-    this._destroyBwChart();
+    DashboardPreviewGrid.clear();
+    DashboardBwChart.destroy();
 
     const liveSection = document.getElementById('liveSection');
     const completedSection = document.getElementById('completedSection');
@@ -345,124 +343,7 @@ const DashboardPage = {
     if (resultsWrap) resultsWrap.innerHTML = '';
   },
 
-  /* --- Live Preview --- */
-  _maxPreviewSlots() {
-    const config = Store.get('config');
-    return config?.maxParallelPreviews ?? 6;
-  },
-
-  _initPreviewSlots(_run) {
-    const grid = document.getElementById('previewGrid');
-    if (!grid) return;
-    const config = Store.get('config');
-    if (config?.showPreviews === 0) return;
-
-    const maxSlots = this._maxPreviewSlots();
-    const cols = Math.min(config?.maxParallelTests || 2, maxSlots);
-    grid.dataset.cols = Math.min(cols, 4);
-    grid.innerHTML = '';
-    for (let i = 0; i < cols; i++) {
-      grid.innerHTML += `<div class="preview-cell idle" id="preview-${i}"></div>`;
-    }
-  },
-
-  _addPreview(streamInfo) {
-    const config = Store.get('config');
-    if (config?.showPreviews === 0) return;
-
-    const grid = document.getElementById('previewGrid');
-    if (!grid) return;
-
-    // Find an idle slot
-    let slot = grid.querySelector('.preview-cell.idle');
-
-    // No idle slot — add a new one if under max
-    if (!slot) {
-      const count = grid.querySelectorAll('.preview-cell').length;
-      const config2 = Store.get('config');
-      const maxSlots = Math.min(this._maxPreviewSlots(), config2?.maxParallelTests || 2);
-      if (count >= maxSlots) return;
-      const cell = document.createElement('div');
-      cell.className = 'preview-cell';
-      cell.id = `preview-${count}`;
-      grid.appendChild(cell);
-      // Update grid cols if needed
-      const cols = Math.min(count + 1, 4);
-      if (parseInt(grid.dataset.cols) < cols) grid.dataset.cols = cols;
-      slot = cell;
-    } else {
-      slot.classList.remove('idle');
-    }
-    slot.dataset.itemId = streamInfo.itemId;
-    slot.dataset.deviceId = streamInfo.deviceId;
-
-    // Build proxy URL (now returns an HLS master.m3u8)
-    const params = new URLSearchParams({
-      mediaSourceId: streamInfo.mediaSourceId,
-      deviceId: streamInfo.deviceConfig?.deviceId || `jellyprobe-${streamInfo.deviceId}`,
-      playSessionId: streamInfo.playSessionId || '',
-      videoCodec: streamInfo.deviceConfig?.videoCodec || 'h264',
-      audioCodec: streamInfo.deviceConfig?.audioCodec || 'aac',
-      maxBitrate: streamInfo.deviceConfig?.maxBitrate || 20000000,
-      maxWidth: streamInfo.deviceConfig?.maxWidth || 1920,
-      maxHeight: streamInfo.deviceConfig?.maxHeight || 1080
-    });
-    const streamUrl = `/api/stream/${streamInfo.itemId}?${params.toString()}`;
-
-    slot.innerHTML = `
-      <video autoplay muted playsinline></video>
-      <div class="preview-cell-overlay">
-        <span class="preview-cell-label" title="${Utils.escapeHtml(streamInfo.itemName || '')}">${Utils.escapeHtml(streamInfo.itemName || 'Testing…')}</span>
-        <span class="preview-cell-badge">${VideoCodecRegistry.getVideoCodecLabel(streamInfo.deviceConfig?.videoCodec)}</span>
-      </div>`;
-
-    const video = slot.querySelector('video');
-
-    // Use HLS.js if available, otherwise try native HLS (Safari)
-    if (typeof Hls !== 'undefined' && Hls.isSupported()) {
-      const hls = new Hls({ enableWorker: false, maxBufferLength: 10, maxMaxBufferLength: 15 });
-      hls.loadSource(streamUrl);
-      hls.attachMedia(video);
-      hls.on(Hls.Events.ERROR, () => { /* Silently handle — test validates transcoding */ });
-      slot._hls = hls;
-    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-      video.src = streamUrl;
-    }
-
-    video.addEventListener('error', () => {
-      // Silently handle video errors — the test itself validates transcoding
-    });
-  },
-
-  _removePreview(itemId, deviceId) {
-    const grid = document.getElementById('previewGrid');
-    if (!grid) return;
-    const slots = grid.querySelectorAll('.preview-cell');
-    for (const s of slots) {
-      if (s.dataset.itemId === itemId && (!deviceId || String(s.dataset.deviceId) === String(deviceId))) {
-        if (s._hls) { s._hls.destroy(); s._hls = null; }
-        const video = s.querySelector('video');
-        if (video) { video.pause(); video.src = ''; }
-        s.innerHTML = '';
-        s.classList.add('idle');
-        delete s.dataset.itemId;
-        delete s.dataset.deviceId;
-        break;
-      }
-    }
-  },
-
-  _clearPreviews() {
-    const grid = document.getElementById('previewGrid');
-    if (!grid) return;
-    grid.querySelectorAll('.preview-cell').forEach(s => {
-      if (s._hls) { s._hls.destroy(); s._hls = null; }
-      const video = s.querySelector('video');
-      if (video) { video.pause(); video.src = ''; }
-      s.innerHTML = '';
-      s.classList.add('idle');
-    });
-  },
+  /* Live preview grid lives in DashboardPreviewGrid (dashboard-preview.js). */
 
   /* --- Log --- */
   _addLog(msg, type) {
@@ -522,65 +403,7 @@ const DashboardPage = {
     } catch (_e) {/* */}
   },
 
-  /* --- Bandwidth Chart --- */
-  _initBwChart() {
-    if (typeof Chart === 'undefined') return;
-    const canvas = document.getElementById('bwChart');
-    if (!canvas) return;
-    this._bwTotalBytes = 0;
-    this._bwStartTime = Date.now();
-    this._bwSecondBuckets = {};
-    this._bwChart = new Chart(canvas, {
-      type: 'line',
-      data: {
-        labels: [],
-        datasets: [{
-          label: 'MB/s',
-          data: [],
-          borderColor: '#818cf8',
-          backgroundColor: 'rgba(129,140,248,0.1)',
-          fill: true,
-          tension: 0.3,
-          pointRadius: 0,
-          borderWidth: 2
-        }]
-      },
-      options: {
-        animation: false,
-        responsive: true,
-        maintainAspectRatio: false,
-        scales: {
-          x: { title: { display: true, text: 'Seconds', color: '#64748b' }, ticks: { color: '#64748b', maxTicksLimit: 20 }, grid: { color: 'rgba(148,163,184,0.08)' } },
-          y: { title: { display: true, text: 'MB/s', color: '#64748b' }, ticks: { color: '#64748b' }, grid: { color: 'rgba(148,163,184,0.08)' }, beginAtZero: true }
-        },
-        plugins: { legend: { display: false } }
-      }
-    });
-  },
-
-  _onBandwidthUpdate(d) {
-    if (!this._bwChart) return;
-    // Use wall-clock time relative to chart start, not per-test elapsed time
-    const sec = Math.floor((Date.now() - this._bwStartTime) / 1000);
-    if (!this._bwSecondBuckets[sec]) this._bwSecondBuckets[sec] = 0;
-    this._bwSecondBuckets[sec] += d.bytesThisSecond;
-    this._bwTotalBytes += d.bytesThisSecond;
-
-    const maxSec = Math.max(...Object.keys(this._bwSecondBuckets).map(Number));
-    const labels = [];
-    const data = [];
-    for (let s = 0; s <= maxSec; s++) {
-      labels.push(s);
-      data.push(((this._bwSecondBuckets[s] || 0) / (1024 * 1024)).toFixed(2));
-    }
-    this._bwChart.data.labels = labels;
-    this._bwChart.data.datasets[0].data = data;
-    this._bwChart.update('none');
-  },
-
-  _destroyBwChart() {
-    if (this._bwChart) { this._bwChart.destroy(); this._bwChart = null; }
-  },
+  /* Bandwidth chart lives in DashboardBwChart (dashboard-bwchart.js). */
 
   _destroyPieChart() {
     if (this._pieChart) { this._pieChart.destroy(); this._pieChart = null; }
@@ -890,8 +713,8 @@ const DashboardPage = {
   destroy() {
     this._stopPolling();
     this._teardownWS();
-    this._clearPreviews();
-    this._destroyBwChart();
+    DashboardPreviewGrid.clear();
+    DashboardBwChart.destroy();
     this._destroyPieChart();
   }
 };
