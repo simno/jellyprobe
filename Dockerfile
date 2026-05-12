@@ -1,4 +1,4 @@
-FROM node:25-alpine
+FROM node:26-alpine
 
 # Install sqlite, su-exec for dropping privileges, and tzdata for timezone support
 RUN apk add --no-cache sqlite su-exec tzdata
