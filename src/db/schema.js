@@ -29,7 +29,7 @@ class DatabaseManager {
   ]);
   static TEST_RUN_FIELDS = new Set([
     'name', 'status', 'config', 'totalTests', 'completedTests',
-    'successfulTests', 'failedTests', 'startedAt', 'completedAt'
+    'successfulTests', 'failedTests', 'startedAt', 'completedAt', 'error'
   ]);
   static SCHEDULE_FIELDS = new Set([
     'name', 'enabled', 'frequency', 'dayOfWeek', 'timeOfDay',
@@ -91,7 +91,8 @@ class DatabaseManager {
         failedTests INTEGER DEFAULT 0,
         createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
         startedAt DATETIME,
-        completedAt DATETIME
+        completedAt DATETIME,
+        error TEXT
       );
 
       CREATE TABLE IF NOT EXISTS tests (
@@ -187,6 +188,15 @@ class DatabaseManager {
     if (!hasBytesDownloaded) {
       log.info('Adding bytesDownloaded column to tests table...');
       this.db.exec('ALTER TABLE tests ADD COLUMN bytesDownloaded INTEGER DEFAULT 0');
+    }
+
+    // Store the failure reason on a test run so the UI can explain why a run
+    // ended as 'failed' (e.g. Jellyfin unreachable) instead of just showing 0 tests.
+    const testRunColumns = this.db.pragma('table_info(test_runs)');
+    const hasError = testRunColumns.some(col => col.name === 'error');
+    if (!hasError) {
+      log.info('Adding error column to test_runs table...');
+      this.db.exec('ALTER TABLE test_runs ADD COLUMN error TEXT');
     }
 
     // Migrate devices table for resolution constraints

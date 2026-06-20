@@ -22,7 +22,9 @@ const HistoryPage = {
 
       container.innerHTML = runs.map(run => {
         const pct = run.totalTests > 0 ? Math.round((run.completedTests / run.totalTests) * 100) : 0;
-        const badges = { running: 'badge-info', paused: 'badge-warning', completed: 'badge-success', cancelled: 'badge-danger', pending: 'badge-neutral' };
+        const badges = { running: 'badge-info', paused: 'badge-warning', completed: 'badge-success', failed: 'badge-danger', cancelled: 'badge-danger', pending: 'badge-neutral' };
+        const errTitle = run.status === 'failed' && run.error
+          ? ` title="${Utils.escapeHtml(run.error)}"` : '';
         return `
           <div class="run-list-item" data-rid="${run.id}">
             <div class="run-list-info">
@@ -32,7 +34,7 @@ const HistoryPage = {
             <div class="run-list-stats">
               <span class="badge badge-success">${run.successfulTests || 0} ✓</span>
               <span class="badge badge-danger">${run.failedTests || 0} ✗</span>
-              <span class="badge ${badges[run.status] || 'badge-neutral'}">${run.status}</span>
+              <span class="badge ${badges[run.status] || 'badge-neutral'}"${errTitle}>${run.status}</span>
             </div>
           </div>`;
       }).join('');
@@ -68,6 +70,12 @@ const HistoryPage = {
 
         <h2 class="page-title" style="font-size:1.3rem">${Utils.escapeHtml(run.name || 'Test Run')}</h2>
         <p class="text-sm text-2 mb-24">${Utils.relativeTime(run.createdAt)}</p>
+
+        ${run.status === 'failed' && run.error ? `
+          <div class="alert alert-danger mb-24">
+            <i data-lucide="alert-triangle"></i>
+            <div><strong>Run failed:</strong> ${Utils.escapeHtml(run.error)}</div>
+          </div>` : ''}
 
         <div class="stats-row mb-24">
           <div class="stat-card accent"><div class="stat-label">Total</div><div class="stat-value">${run.totalTests}</div></div>

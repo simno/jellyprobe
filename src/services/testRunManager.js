@@ -78,10 +78,12 @@ class TestRunManager extends EventEmitter {
         .catch(err => {
           log.error(`Failed to queue media items for test run ${runId}:`, err.message);
           // Don't leave the run stuck in 'running' — mark as failed so the
-          // history view reflects the terminal state.
+          // history view reflects the terminal state. Persist the reason so the
+          // UI can distinguish a fetch failure from a genuinely empty library.
           try {
             this.db.updateTestRun(runId, {
               status: 'failed',
+              error: err.message,
               completedAt: new Date().toISOString()
             });
           } catch (updateErr) {
@@ -94,12 +96,33 @@ class TestRunManager extends EventEmitter {
 
     } catch (err) {
       log.error(`Failed to start test run ${runId}:`, err.message);
-      this.db.updateTestRun(runId, { status: 'failed', completedAt: new Date().toISOString() });
+      this.db.updateTestRun(runId, { status: 'failed', error: err.message, completedAt: new Date().toISOString() });
       this.emit('testRunError', { id: runId, error: err.message });
       throw err;
     }
 
     return { success: true };
+  }
+
+  // Retry a Jellyfin fetch with exponential backoff. Scheduled runs often fire
+  // when the server is briefly unavailable (e.g. a 05:00 restart/backup window);
+  // without this, one transient blip fails the whole run. This runs detached
+  // from the scheduler tick, so the total wait (~30s) doesn't block scheduling.
+  async _withRetry(fn, label) {
+    const MAX_ATTEMPTS = 5;
+    let lastErr;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        return await fn();
+      } catch (err) {
+        lastErr = err;
+        if (attempt === MAX_ATTEMPTS) break;
+        const delay = Math.min(30000, 2000 * 2 ** (attempt - 1));
+        log.warn(`[TestRunManager] ${label} failed (attempt ${attempt}/${MAX_ATTEMPTS}): ${err.message} — retrying in ${delay}ms`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      }
+    }
+    throw lastErr;
   }
 
   async _queueMediaItemsInBatches(runId, devices, scope, testConfig) {
@@ -113,7 +136,10 @@ class TestRunManager extends EventEmitter {
         for (const libId of scope.libraryIds) {
           let start = 0, hasMore = true;
           while (hasMore) {
-            const r = await this.jellyfinClient.getLibraryItems(libId, BATCH_SIZE, start);
+            const r = await this._withRetry(
+              () => this.jellyfinClient.getLibraryItems(libId, BATCH_SIZE, start),
+              `getLibraryItems(lib=${libId}, start=${start})`
+            );
             if (r.items && r.items.length > 0) {
               totalQueued += this._queueTestBatch(runId, devices, r.items, testConfig);
               this.testRunner.processQueue();
@@ -131,7 +157,10 @@ class TestRunManager extends EventEmitter {
         const pinnedIds = Array.isArray(scope.itemIds) && scope.itemIds.length > 0
           ? new Set(scope.itemIds) : null;
         for (const libId of scope.libraryIds) {
-          const r = await this.jellyfinClient.getRecentLibraryItems(libId, days, 10000);
+          const r = await this._withRetry(
+            () => this.jellyfinClient.getRecentLibraryItems(libId, days, 10000),
+            `getRecentLibraryItems(lib=${libId}, days=${days})`
+          );
           if (r.items && r.items.length > 0) {
             const items = pinnedIds ? r.items.filter(i => pinnedIds.has(i.Id)) : r.items;
             if (items.length > 0) {
@@ -144,7 +173,10 @@ class TestRunManager extends EventEmitter {
         const items = [];
         for (const itemId of scope.itemIds) {
           try {
-            const item = await this.jellyfinClient.getItem(itemId);
+            const item = await this._withRetry(
+              () => this.jellyfinClient.getItem(itemId),
+              `getItem(${itemId})`
+            );
             if (item) items.push(item);
           } catch (e) {
             log.warn(`[TestRunManager] Failed to fetch item ${itemId}: ${e.message}`);

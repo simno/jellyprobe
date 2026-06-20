@@ -602,6 +602,16 @@ tr:hover td { background: var(--bg-card); }
   border: 1px solid rgba(239,68,68,.2);
 }
 
+.alert {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 12px 14px; border-radius: 8px; font-size: .9rem; line-height: 1.4;
+}
+.alert i { flex-shrink: 0; width: 18px; height: 18px; margin-top: 1px; }
+.alert-danger {
+  background: rgba(239,68,68,.08); color: var(--red-400);
+  border: 1px solid rgba(239,68,68,.2);
+}
+
 .results-matrix th, .results-matrix td {
   text-align: center;
 }
