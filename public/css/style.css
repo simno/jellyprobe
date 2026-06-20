@@ -923,6 +923,11 @@ tr:hover td { background: var(--bg-card); }
   flex-shrink: 0; font-size: .7rem; text-transform: uppercase; letter-spacing: .04em;
   color: var(--text-3); background: var(--bg-card); padding: 2px 8px; border-radius: var(--radius-sm);
 }
+.media-item-date {
+  flex-shrink: 0; display: inline-flex; align-items: center; gap: 4px;
+  font-size: .72rem; color: var(--text-3); white-space: nowrap;
+}
+.media-item-date svg { width: 12px; height: 12px; }
 .media-chip {
   padding: 10px 14px;
   background: var(--bg-surface);
@@ -974,6 +979,20 @@ tr:hover td { background: var(--bg-card); }
 .review-row-label { color: var(--text-2); }
 .review-row-value { font-weight: 600; }
 .review-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.review-media-list {
+  display: flex; flex-direction: column; gap: 4px;
+  max-height: 260px; overflow-y: auto;
+  margin-top: 12px; padding-right: 4px;
+}
+.review-media-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 12px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  font-size: .85rem;
+}
+.review-media-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .review-chip {
   padding: 4px 10px;
   background: var(--bg-card);

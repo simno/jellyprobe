@@ -36,7 +36,9 @@ function createLibrariesRouter({ jellyfinClient }) {
       const { libraryId } = req.params;
       const { recent, days } = req.query;
       if (recent === 'true') {
-        const result = await jellyfinClient.getRecentLibraryItems(libraryId, days, 1);
+        // getRecentLibraryItems filters by date client-side, so we must fetch
+        // the full candidate set (not limit=1) for the count to be accurate.
+        const result = await jellyfinClient.getRecentLibraryItems(libraryId, days, 10000);
         return res.json({ count: result.totalCount || 0 });
       }
       const result = await jellyfinClient.getLibraryItems(libraryId, 1, 0);

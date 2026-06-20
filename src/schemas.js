@@ -93,7 +93,7 @@ const testRunCreateBody = z.object({
 
 const scheduleBody = z.object({
   name: z.string().min(1).max(200),
-  frequency: z.enum(['daily', 'weekly']),
+  frequency: z.enum(['every6h', 'every12h', 'daily', 'weekly']),
   dayOfWeek: z.coerce.number().int().min(0).max(6).optional(),
   timeOfDay: z.string().regex(/^\d{2}:\d{2}$/, 'timeOfDay must be HH:MM')
 }).passthrough();

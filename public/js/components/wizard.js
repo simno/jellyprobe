@@ -153,7 +153,7 @@ const WizardPage = {
       <div class="section-title"><i data-lucide="filter"></i> Media Scope</div>
       <div class="filter-tabs mb-16" id="filterTabs">
         <button class="filter-tab${filter === 'all' ? ' active' : ''}" data-f="all">All media</button>
-        <button class="filter-tab${filter === 'recent' ? ' active' : ''}" data-f="recent">Date range</button>
+        <button class="filter-tab${filter === 'recent' ? ' active' : ''}" data-f="recent">Recently added</button>
         <button class="filter-tab${filter === 'custom' ? ' active' : ''}" data-f="custom">Custom selection</button>
       </div>
 
@@ -233,7 +233,10 @@ const WizardPage = {
     document.getElementById('wizNext2').addEventListener('click', () => {
       if (Store.get('selectedLibraries').length === 0) { Utils.toast('Select at least one library', 'error'); return; }
       const f = Store.get('mediaFilter');
-      if (f === 'custom' && Store.get('selectedMedia').length === 0) { Utils.toast('Select at least one media item', 'error'); return; }
+      if ((f === 'custom' || f === 'recent') && Store.get('selectedMedia').length === 0) {
+        Utils.toast(f === 'recent' ? 'No recently added media selected to test' : 'Select at least one media item', 'error');
+        return;
+      }
       this._step = 3;
       this._renderStep();
     });
@@ -264,18 +267,71 @@ const WizardPage = {
       Store.set('allMediaCount', total);
       info.textContent = `All ${total} items from selected libraries will be tested.`;
     } else if (filter === 'recent') {
-      custom.classList.add('hidden');
       info.innerHTML = '<div class="spinner"></div>';
+      custom.classList.add('hidden');
       const days = Store.get('mediaDays') || 7;
+      const label = days === 1 ? '24 hours' : days === 2 ? '48 hours' : `${days} days`;
+
       let items = [];
       for (const lib of selLibs) {
         try { const r = await Api.getRecentItems(lib.ItemId || lib.Id, days); if (r.items) items.push(...r.items); } catch (_e) {/* */}
       }
+      // Dedupe across libraries and sort newest-added first so the most
+      // recent additions are at the top of the list.
+      const seen = new Set();
+      items = items.filter(i => { if (!i || seen.has(i.Id)) return false; seen.add(i.Id); return true; });
+      items.sort((a, b) => this._itemAddedMs(b) - this._itemAddedMs(a));
+
       Store.set('allMediaItems', items);
-      const label = days === 1 ? '24 hours' : days === 2 ? '48 hours' : `${days} days`;
-      info.textContent = items.length > 0
-        ? `${items.length} items added in the last ${label} will be tested.`
-        : `No media added in the last ${label}.`;
+      // Pre-select everything recently added; the user can uncheck items they
+      // don't want to test.
+      Store.set('selectedMedia', items.slice());
+
+      custom.classList.remove('hidden');
+
+      if (items.length === 0) {
+        info.textContent = '';
+        custom.innerHTML = `
+          <div class="empty-state" style="padding:40px 24px">
+            <i data-lucide="calendar-x"></i>
+            <p>No media added in the last ${label}.<br>Try a wider range above.</p>
+          </div>`;
+        if (typeof lucide !== 'undefined') lucide.createIcons();
+        return;
+      }
+
+      custom.innerHTML = `
+        <div class="flex gap-8 mb-12 align-center">
+          <button class="btn btn-sm btn-ghost" id="recentAll">Select all</button>
+          <button class="btn btn-sm btn-ghost" id="recentNone">Clear</button>
+          <span class="text-sm text-2 ml-auto" id="mediaCountLabel"></span>
+        </div>
+        <div class="media-list-compact" id="mediaGrid">
+          ${items.map(item => this._renderRecentItem(item, true)).join('')}
+        </div>`;
+
+      const updateCount = () => {
+        const sel = Store.get('selectedMedia');
+        info.textContent = `${sel.length} of ${items.length} item${items.length === 1 ? '' : 's'} added in the last ${label} selected for testing.`;
+        const lbl = document.getElementById('mediaCountLabel');
+        if (lbl) lbl.textContent = `${sel.length} of ${items.length} selected`;
+      };
+      updateCount();
+      this._bindMediaGridClicks(updateCount);
+
+      const setAll = (on) => {
+        Store.set('selectedMedia', on ? items.slice() : []);
+        custom.querySelectorAll('.media-item').forEach(r => {
+          r.classList.toggle('selected', on);
+          const cb = r.querySelector('input');
+          if (cb) cb.checked = on;
+        });
+        updateCount();
+      };
+      document.getElementById('recentAll')?.addEventListener('click', () => setAll(true));
+      document.getElementById('recentNone')?.addEventListener('click', () => setAll(false));
+
+      if (typeof lucide !== 'undefined') lucide.createIcons();
     } else {
       // Custom selection — search-first approach
       custom.classList.remove('hidden');
@@ -362,6 +418,73 @@ const WizardPage = {
     </label>`;
   },
 
+  // Like _renderMediaItem but surfaces when the item was added, so the user
+  // can see exactly what's new before testing it.
+  _renderRecentItem(item, sel) {
+    const name = Utils.formatItemName(item);
+    const type = item.Type === 'Episode' ? 'Episode' : item.Type === 'Movie' ? 'Movie' : 'Video';
+    const added = Utils.relativeTime(this._itemAddedIso(item));
+    return `<label class="media-item${sel ? ' selected' : ''}" data-mid="${item.Id}">
+      <input type="checkbox" ${sel ? 'checked' : ''} />
+      <span class="media-item-name">${Utils.escapeHtml(name)}</span>
+      ${added ? `<span class="media-item-date" title="Added ${added}"><i data-lucide="clock"></i> ${added}</span>` : ''}
+      <span class="media-item-type">${type}</span>
+    </label>`;
+  },
+
+  // "When did this item first appear" — mirror the server's heuristic of using
+  // the earliest of DateCreated / DateLastSaved so a metadata refresh doesn't
+  // make an old item look brand new.
+  _itemAddedMs(item) {
+    const cands = [item.DateCreated, item.DateLastSaved]
+      .filter(Boolean)
+      .map(d => new Date(d).getTime())
+      .filter(t => Number.isFinite(t));
+    return cands.length ? Math.min(...cands) : 0;
+  },
+
+  _itemAddedIso(item) {
+    const ms = this._itemAddedMs(item);
+    return ms ? new Date(ms).toISOString() : '';
+  },
+
+  // Read-only list of the exact items a run will test, shown on the Review
+  // step. Skipped for the "all" scope (could be thousands of items).
+  _renderReviewMediaList(filter) {
+    if (filter === 'all') return '';
+    const items = Store.get('selectedMedia') || [];
+    if (items.length === 0) return '';
+
+    const CAP = 100;
+    const rows = items.slice(0, CAP).map(item => {
+      const name = Utils.formatItemName(item);
+      const type = item.Type === 'Episode' ? 'Episode' : item.Type === 'Movie' ? 'Movie' : 'Video';
+      const added = filter === 'recent' ? Utils.relativeTime(this._itemAddedIso(item)) : '';
+      return `<div class="review-media-row">
+        <span class="review-media-name">${Utils.escapeHtml(name)}</span>
+        ${added ? `<span class="media-item-date"><i data-lucide="clock"></i> ${added}</span>` : ''}
+        <span class="media-item-type">${type}</span>
+      </div>`;
+    }).join('');
+
+    const more = items.length > CAP
+      ? `<div class="text-sm text-2 text-center mt-8">…and ${items.length - CAP} more</div>`
+      : '';
+    return `<div class="review-media-list">${rows}</div>${more}`;
+  },
+
+  // "Mar 3 → Jan 12"-style range of when the selected recent items were added.
+  _reviewAddedRange() {
+    const items = (Store.get('selectedMedia') || [])
+      .map(i => this._itemAddedMs(i))
+      .filter(ms => ms > 0);
+    if (items.length === 0) return '—';
+    const fmt = (ms) => Utils.relativeTime(new Date(ms).toISOString());
+    const newest = fmt(Math.max(...items));
+    const oldest = fmt(Math.min(...items));
+    return newest === oldest ? newest : `${newest} → ${oldest}`;
+  },
+
   _bindMediaGridClicks(updateCount) {
     const grid = document.getElementById('mediaGrid');
     if (!grid) return;
@@ -422,7 +545,6 @@ const WizardPage = {
 
     let mediaCount;
     if (filter === 'all') mediaCount = Store.get('allMediaCount');
-    else if (filter === 'recent') mediaCount = Store.get('allMediaItems').length;
     else mediaCount = Store.get('selectedMedia').length;
 
     const totalTests = devices.length * mediaCount;
@@ -454,7 +576,9 @@ const WizardPage = {
       <div class="review-block">
         <div class="review-block-title">Media</div>
         <div class="review-row"><span class="review-row-label">Scope</span><span class="review-row-value">${scopeLabel}</span></div>
+        ${filter === 'recent' ? `<div class="review-row"><span class="review-row-label">Newest / oldest added</span><span class="review-row-value">${this._reviewAddedRange()}</span></div>` : ''}
         <div class="review-row"><span class="review-row-label">Items</span><span class="review-row-value">${mediaCount}</span></div>
+        ${this._renderReviewMediaList(filter)}
       </div>
 
       <div class="review-block">
@@ -560,10 +684,11 @@ const WizardPage = {
         estimatedCount = Store.get('allMediaCount');
       } else if (filter === 'recent') {
         const days = Store.get('mediaDays') || 7;
-        const items = Store.get('allMediaItems');
+        const items = Store.get('selectedMedia');
         mediaScope.days = days;
-        // Pin to the exact item IDs the user previewed so the run
-        // tests precisely what was shown, not a re-fetch from Jellyfin
+        // Pin to the exact item IDs the user selected so the run tests
+        // precisely what was shown (minus anything they unchecked), not a
+        // re-fetch from Jellyfin.
         mediaScope.itemIds = items.map(m => m.Id);
         estimatedCount = items.length;
       } else {

@@ -80,6 +80,34 @@ describe('Scheduler', () => {
       expect(nextDate.getDate()).toBe(16);
       expect(nextDate.getHours()).toBe(2);
     });
+
+    test('should advance every6h schedule by 6h when time has passed', () => {
+      const now = new Date();
+      now.setHours(10, 0, 0, 0);
+      jest.setSystemTime(now);
+
+      const next = Scheduler.computeNextRun('every6h', null, '08:00');
+      const nextDate = new Date(next);
+
+      const expected = new Date(now);
+      expected.setHours(8, 0, 0, 0);
+      expected.setTime(expected.getTime() + 6 * 60 * 60 * 1000);
+      expect(nextDate.getTime()).toBe(expected.getTime());
+    });
+
+    test('should advance every12h schedule by 12h when time has passed', () => {
+      const now = new Date();
+      now.setHours(10, 0, 0, 0);
+      jest.setSystemTime(now);
+
+      const next = Scheduler.computeNextRun('every12h', null, '08:00');
+      const nextDate = new Date(next);
+
+      const expected = new Date(now);
+      expected.setHours(8, 0, 0, 0);
+      expected.setTime(expected.getTime() + 12 * 60 * 60 * 1000);
+      expect(nextDate.getTime()).toBe(expected.getTime());
+    });
   });
 
   describe('_tick', () => {
