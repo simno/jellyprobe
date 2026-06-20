@@ -1,7 +1,8 @@
 const Router = {
   _routes: {
-    '/':          { page: 'wizard',    component: WizardPage },
-    '/dashboard': { page: 'dashboard', component: DashboardPage },
+    '/':          { page: 'home',      component: HomePage },
+    '/new':       { page: 'wizard',    component: WizardPage },
+    '/run':       { page: 'dashboard', component: DashboardPage },
     '/history':   { page: 'history',   component: HistoryPage },
     '/schedules': { page: 'schedules', component: SchedulesPage },
     '/settings':  { page: 'settings',  component: SettingsPage }

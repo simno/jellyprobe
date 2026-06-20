@@ -485,6 +485,10 @@ class DatabaseManager {
     return run;
   }
 
+  getTestRunCount() {
+    return this.db.prepare('SELECT COUNT(*) as count FROM test_runs').get().count;
+  }
+
   getAllTestRuns(limit = 50) {
     const runs = this.db.prepare(`
       SELECT * FROM test_runs 

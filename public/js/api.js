@@ -69,5 +69,6 @@ const Api = {
   updateSchedule(id, d) { return this.put(`/api/schedules/${id}`, d); },
   deleteSchedule(id) { return this.del(`/api/schedules/${id}`); },
   runScheduleNow(id) { return this.post(`/api/schedules/${id}/run`); },
-  getVersion()       { return this.get('/api/version'); }
+  getVersion()       { return this.get('/api/version'); },
+  getStats()         { return this.get('/api/stats'); }
 };

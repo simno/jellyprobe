@@ -69,7 +69,7 @@ const DashboardPage = {
           <i data-lucide="inbox"></i>
           <p>No active test run.</p>
           <div style="display: flex; gap: 12px; justify-content: center; margin-top: 16px;">
-            <a href="#/" class="btn btn-primary"><i data-lucide="plus"></i> New Run</a>
+            <a href="#/new" class="btn btn-primary"><i data-lucide="plus"></i> New Run</a>
             <button class="btn btn-ghost" id="dashRerunBtn"><i data-lucide="repeat"></i> Rerun</button>
           </div>
           <div id="rerunModal" style="display:none; margin-top: 24px;"></div>
@@ -269,7 +269,7 @@ const DashboardPage = {
         actions.innerHTML += '<button class="btn btn-danger btn-sm" id="cancelBtn"><i data-lucide="x"></i> Cancel</button>';
       }
       if (!isActive) {
-        actions.innerHTML += '<a href="#/" class="btn btn-primary btn-sm"><i data-lucide="plus"></i> New Run</a>';
+        actions.innerHTML += '<a href="#/new" class="btn btn-primary btn-sm"><i data-lucide="plus"></i> New Run</a>';
       }
       if (typeof lucide !== 'undefined') lucide.createIcons();
 

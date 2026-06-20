@@ -18,9 +18,9 @@ const JellyProbe = {
         const active = await Api.getActiveTestRun();
         if (active) {
           Store.set('currentTestRun', active);
-          // Auto-navigate to dashboard if there's an active run
+          // Auto-navigate to the live run view if there's an active run
           if (!location.hash || location.hash === '#/') {
-            location.hash = '#/dashboard';
+            location.hash = '#/run';
           }
         }
       } catch (_e) {/* */}

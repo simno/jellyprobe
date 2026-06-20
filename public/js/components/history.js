@@ -8,13 +8,21 @@ const HistoryPage = {
 
   async init() {
     const container = document.getElementById('historyContent');
+
+    // Deep-link from the dashboard's recent-runs list: open that run directly.
+    const openId = Store.get('historyOpenRunId');
+    if (openId) {
+      Store.set('historyOpenRunId', null);
+      return this._showRun(openId);
+    }
+
     try {
       const runs = await Api.getTestRuns();
       if (!runs || runs.length === 0) {
         container.innerHTML = `
           <div class="empty-state">
             <i data-lucide="history"></i>
-            <p>No test runs yet.<br><a href="#/" class="text-accent">Create your first test run →</a></p>
+            <p>No test runs yet.<br><a href="#/new" class="text-accent">Create your first test run →</a></p>
           </div>`;
         if (typeof lucide !== 'undefined') lucide.createIcons();
         return;
@@ -129,7 +137,7 @@ const HistoryPage = {
       if (result.success && result.testRun) {
         await Api.startTestRun(result.testRun.id);
         Store.set('currentTestRun', null);
-        window.location.hash = '#/dashboard';
+        window.location.hash = '#/run';
       }
     } catch (error) {
       btn.disabled = false;

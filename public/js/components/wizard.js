@@ -731,8 +731,8 @@ const WizardPage = {
         Store.set('testResults', []);
         Store.set('activeStreams', []);
 
-        // Navigate to dashboard and scroll to top
-        location.hash = '#/dashboard';
+        // Navigate to the live run view and scroll to top
+        location.hash = '#/run';
         window.scrollTo(0, 0);
 
         // Start the run (fire without blocking — server returns immediately)

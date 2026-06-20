@@ -64,6 +64,7 @@ module.exports = [
         WS: 'readonly',
         Router: 'readonly',
         SetupPage: 'readonly',
+        HomePage: 'readonly',
         WizardPage: 'readonly',
         DashboardPage: 'readonly',
         DashboardPreviewGrid: 'readonly',
@@ -77,7 +78,7 @@ module.exports = [
     rules: {
       'no-unused-vars': ['error', { 
         argsIgnorePattern: '^_',
-        varsIgnorePattern: '^_|^(Utils|Api|Store|WS|Router|SetupPage|WizardPage|DashboardPage|DashboardPreviewGrid|DashboardBwChart|HistoryPage|SchedulesPage|SettingsPage|JellyProbe)$',
+        varsIgnorePattern: '^_|^(Utils|Api|Store|WS|Router|SetupPage|HomePage|WizardPage|DashboardPage|DashboardPreviewGrid|DashboardBwChart|HistoryPage|SchedulesPage|SettingsPage|JellyProbe)$',
         caughtErrorsIgnorePattern: '^_'
       }],
       'no-redeclare': 'off'

@@ -12,6 +12,7 @@ const { createDevicesRouter } = require('./routes/devices');
 const { createTestsRouter } = require('./routes/tests');
 const { createScanRouter } = require('./routes/scan');
 const { createTestRunsRouter } = require('./routes/testRuns');
+const { createStatsRouter } = require('./routes/stats');
 const { createSchedulesRouter } = require('./routes/schedules');
 const { createStreamRouter } = require('./routes/stream');
 
@@ -64,6 +65,7 @@ function createApp({ db, jellyfinClient, scanner, testRunner, testRunManager, sc
   app.use('/api/tests', createTestsRouter({ db, testRunner }));
   app.use('/api/scan', createScanRouter({ db, scanner }));
   app.use('/api/test-runs', createTestRunsRouter({ testRunManager }));
+  app.use('/api/stats', createStatsRouter({ db, jellyfinClient }));
   app.use('/api/schedules', createSchedulesRouter({ db, scheduler }));
   app.use('/api/stream', createStreamRouter({ jellyfinClient }));
 
