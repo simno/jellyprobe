@@ -29,7 +29,7 @@
   },
   "homepage": "https://github.com/simno/jellyprobe",
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=26.0.0"
   },
   "dependencies": {
     "axios": "^1.18.0",
