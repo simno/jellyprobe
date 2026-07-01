@@ -370,7 +370,9 @@ class DatabaseManager {
     if (fields.length === 0) return;
     fields.push('updatedAt = CURRENT_TIMESTAMP');
     
-    const query = `UPDATE config SET ${fields.join(', ')} WHERE id = 1`;
+    // Target the same row getConfig reads (the newest one), not a hardcoded
+    // id — older databases may not have their config row at id 1.
+    const query = `UPDATE config SET ${fields.join(', ')} WHERE id = (SELECT MAX(id) FROM config)`;
     return this.db.prepare(query).run(...values);
   }
 

@@ -26,7 +26,9 @@ function createConfigRouter({ db, jellyfinClient, scanner, testRunner, broadcast
       const newConfig = db.getConfig();
       jellyfinClient.updateConfig(newConfig.jellyfinUrl, newConfig.apiKey);
 
-      if (updates.scanInterval !== undefined || updates.scanLibraryId !== undefined) {
+      if (updates.scanInterval !== undefined
+          || updates.scanLibraryId !== undefined
+          || updates.scanLibraryIds !== undefined) {
         scanner.restart();
       }
 

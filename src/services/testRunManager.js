@@ -8,6 +8,13 @@ class TestRunManager extends EventEmitter {
     this.testRunner = testRunner;
     this.jellyfinClient = jellyfinClient;
     this.currentRunId = null;
+    // Run ids whose media items are still being fetched/queued. While a run
+    // is in here its totalTests is only an estimate (possibly 0), so test
+    // completions must not be allowed to finalize it.
+    this._queueingRuns = new Set();
+    // Run ids cancelled in this process — checked while queueing so a
+    // cancelled run doesn't keep adding tests from in-flight batch fetches.
+    this._cancelledRuns = new Set();
   }
 
   generateTestRunName() {
@@ -35,7 +42,7 @@ class TestRunManager extends EventEmitter {
     };
   }
 
-  async startTestRun(runId) {
+  async startTestRun(runId, options = {}) {
     const testRun = this.db.getTestRun(runId);
     if (!testRun) {
       throw new Error('Test run not found');
@@ -46,6 +53,7 @@ class TestRunManager extends EventEmitter {
     }
 
     this.currentRunId = runId;
+    this._cancelledRuns.delete(runId);
 
     // Clear any leftover items from a previous run
     this.testRunner.clearQueue();
@@ -55,10 +63,10 @@ class TestRunManager extends EventEmitter {
       startedAt: new Date().toISOString()
     });
 
-    const config = this.db.getConfig();
-    if (config && config.maxParallelTests) {
-      this.testRunner.setMaxParallelTests(config.maxParallelTests);
-      log.info(`Set maxParallelTests to ${config.maxParallelTests}`);
+    const maxParallel = options.maxParallelTests || this.db.getConfig()?.maxParallelTests;
+    if (maxParallel) {
+      this.testRunner.setMaxParallelTests(maxParallel);
+      log.info(`Set maxParallelTests to ${maxParallel}`);
     }
 
     const scope = testRun.config.mediaScope;
@@ -74,8 +82,16 @@ class TestRunManager extends EventEmitter {
       this.emit('testRunStarted', { id: runId });
 
       // Fetch and queue media items in batches — processing starts as items arrive
+      this._queueingRuns.add(runId);
       this._queueMediaItemsInBatches(runId, devices, scope, testConfig || {})
+        .then(() => {
+          this._queueingRuns.delete(runId);
+          // All tests may already have completed while queueing was still in
+          // flight — finalize now, since no further completions will arrive.
+          this._maybeCompleteRun(runId);
+        })
         .catch(err => {
+          this._queueingRuns.delete(runId);
           log.error(`Failed to queue media items for test run ${runId}:`, err.message);
           // Don't leave the run stuck in 'running' — mark as failed so the
           // history view reflects the terminal state. Persist the reason so the
@@ -129,13 +145,18 @@ class TestRunManager extends EventEmitter {
     const BATCH_SIZE = 100;
     let totalQueued = 0;
 
+    // The run can be cancelled while batches are still being fetched. Without
+    // this check the loop would keep queueing tests and re-triggering
+    // processQueue(), effectively resurrecting a cancelled run.
+    const runIsActive = () => !this._cancelledRuns.has(runId);
+
     try {
       log.info(`[TestRunManager] Queueing media: scope=${JSON.stringify(scope)}, devices=${devices.length}`);
 
       if (scope && scope.type === 'all') {
         for (const libId of scope.libraryIds) {
           let start = 0, hasMore = true;
-          while (hasMore) {
+          while (hasMore && runIsActive()) {
             const r = await this._withRetry(
               () => this.jellyfinClient.getLibraryItems(libId, BATCH_SIZE, start),
               `getLibraryItems(lib=${libId}, start=${start})`
@@ -157,6 +178,7 @@ class TestRunManager extends EventEmitter {
         const pinnedIds = Array.isArray(scope.itemIds) && scope.itemIds.length > 0
           ? new Set(scope.itemIds) : null;
         for (const libId of scope.libraryIds) {
+          if (!runIsActive()) break;
           const r = await this._withRetry(
             () => this.jellyfinClient.getRecentLibraryItems(libId, days, 10000),
             `getRecentLibraryItems(lib=${libId}, days=${days})`
@@ -172,6 +194,7 @@ class TestRunManager extends EventEmitter {
       } else if (scope && scope.type === 'custom' && scope.itemIds) {
         const items = [];
         for (const itemId of scope.itemIds) {
+          if (!runIsActive()) break;
           try {
             const item = await this._withRetry(
               () => this.jellyfinClient.getItem(itemId),
@@ -202,6 +225,9 @@ class TestRunManager extends EventEmitter {
 
       log.info(`[TestRunManager] Total queued tests: ${totalQueued}`);
 
+      // Run was cancelled while queueing — leave its terminal status alone.
+      if (!runIsActive()) return;
+
       // If no media items were found, complete the run immediately
       if (totalQueued === 0) {
         log.info(`[TestRunManager] No media to process for run ${runId}, marking as completed`);
@@ -229,6 +255,10 @@ class TestRunManager extends EventEmitter {
   }
 
   _queueTestBatch(runId, devices, items, testConfig) {
+    // Never queue tests for a run that was cancelled while its media was
+    // still being fetched.
+    if (this._cancelledRuns.has(runId)) return 0;
+
     // Ensure testConfig is an object so accessing properties is safe
     testConfig = testConfig || {};
 
@@ -316,6 +346,7 @@ class TestRunManager extends EventEmitter {
       throw new Error('Test run is not currently running');
     }
 
+    this._cancelledRuns.add(runId);
     this.testRunner.cancel();
     this.db.updateTestRun(runId, {
       status: 'cancelled',
@@ -323,6 +354,23 @@ class TestRunManager extends EventEmitter {
     });
     this.currentRunId = null;
     this.emit('testRunCancelled', { id: runId });
+  }
+
+  // Finalize a run if every queued test has completed. Safe to call multiple
+  // times; only transitions runs that are still 'running'.
+  _maybeCompleteRun(runId) {
+    const run = this.db.getTestRun(runId);
+    if (!run || run.status !== 'running') return;
+    if (run.totalTests > 0 && run.completedTests >= run.totalTests) {
+      this.db.updateTestRun(runId, {
+        status: 'completed',
+        completedAt: new Date().toISOString()
+      });
+      this.emit('testRunCompleted', { id: runId });
+      if (this.currentRunId === runId) {
+        this.currentRunId = null;
+      }
+    }
   }
 
   onTestComplete(testResult) {
@@ -348,7 +396,10 @@ class TestRunManager extends EventEmitter {
       failed
     });
 
-    if (completed >= testRun.totalTests) {
+    // While items are still being queued, totalTests is only an estimate
+    // (0 for scheduled runs) — finalizing here would end the run after the
+    // first few completions. _maybeCompleteRun runs again once queueing ends.
+    if (!this._queueingRuns.has(runId) && testRun.totalTests > 0 && completed >= testRun.totalTests) {
       this.db.updateTestRun(runId, {
         status: 'completed',
         completedAt: new Date().toISOString()

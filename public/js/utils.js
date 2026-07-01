@@ -37,6 +37,13 @@ const Utils = {
     const d = new Date(dateStr.endsWith('Z') ? dateStr : dateStr + 'Z');
     const now = new Date();
     const diff = Math.floor((now - d) / 1000);
+    if (diff < -30) {
+      // Future date (e.g. a schedule's next run time)
+      const ahead = -diff;
+      if (ahead < 3600) return 'in ' + Math.max(1, Math.floor(ahead / 60)) + 'm';
+      if (ahead < 86400) return 'in ' + Math.floor(ahead / 3600) + 'h';
+      return 'in ' + Math.floor(ahead / 86400) + 'd';
+    }
     if (diff < 60) return 'just now';
     if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
     if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';

@@ -30,6 +30,7 @@ class JellyfinClient {
     this.baseUrl = baseUrl?.replace(/\/$/, '');
     this.apiKey = apiKey;
     this.client = null; // Reset to ensure updateClient creates a fresh instance
+    this.cachedUserId = null; // A different server/key means a different user
     this.updateClient();
   }
 

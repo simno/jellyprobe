@@ -95,6 +95,18 @@ describe('Scheduler', () => {
       expect(nextDate.getTime()).toBe(expected.getTime());
     });
 
+    test('should never return a past time for interval schedules', () => {
+      // 20:00 with an 01:00 anchor: a single +6h hop (07:00) would still be
+      // in the past, which used to make the schedule fire on every tick.
+      const now = new Date();
+      now.setHours(20, 0, 0, 0);
+      jest.setSystemTime(now);
+
+      const next = new Date(Scheduler.computeNextRun('every6h', null, '01:00'));
+      expect(next.getTime()).toBeGreaterThan(now.getTime());
+      expect(next.getHours()).toBe(1); // 01:00 next day (01+6+6+6+6=25h → 01:00)
+    });
+
     test('should advance every12h schedule by 12h when time has passed', () => {
       const now = new Date();
       now.setHours(10, 0, 0, 0);
@@ -136,7 +148,9 @@ describe('Scheduler', () => {
       await scheduler._tick();
 
       expect(mockTestRunManager.createTestRun).toHaveBeenCalled();
-      expect(mockTestRunManager.startTestRun).toHaveBeenCalledWith(123);
+      // The schedule's own parallelism must be passed through — startTestRun
+      // would otherwise apply the global config value instead.
+      expect(mockTestRunManager.startTestRun).toHaveBeenCalledWith(123, { maxParallelTests: 2 });
       expect(mockDb.updateScheduledRun).toHaveBeenCalledWith(1, expect.objectContaining({
         lastRunAt: expect.any(String),
         nextRunAt: expect.any(String)

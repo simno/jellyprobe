@@ -5,6 +5,10 @@ const DashboardPage = {
   _pieChart: null,
   _wsHandlers: [],
 
+  _isFinished(status) {
+    return status === 'completed' || status === 'cancelled' || status === 'failed';
+  },
+
   render() {
     return `
       <div class="dash-header">
@@ -83,7 +87,7 @@ const DashboardPage = {
       return;
     }
 
-    if (run.status !== 'completed' && run.status !== 'cancelled') {
+    if (!this._isFinished(run.status)) {
       this._prepareForActiveRun();
     }
 
@@ -103,13 +107,13 @@ const DashboardPage = {
       check.addEventListener('change', (e) => {
         Store.set('showPassed', e.target.checked);
         this._loadResults(run.id);
-        if (run.status === 'completed' || run.status === 'cancelled') {
+        if (this._isFinished(run.status)) {
           this._showCompletedView(run);
         }
       });
     }
 
-    const isFinished = run.status === 'completed' || run.status === 'cancelled';
+    const isFinished = this._isFinished(run.status);
     if (isFinished) {
       this._showCompletedView(run);
     } else {
@@ -161,11 +165,27 @@ const DashboardPage = {
       this._updateUI(r);
     });
 
-    this._wsOn('testRunCompleted', (d) => {
+    this._wsOn('testRunCompleted', async (d) => {
       if (d.id !== runId) return;
       const r = Store.get('currentTestRun');
       if (!r) return;
-      r.status = 'completed';
+      // Refetch the run — this event also fires for runs that ended as
+      // 'failed', and the server has the authoritative status/counters.
+      try {
+        const fresh = await Api.getTestRun(runId);
+        Object.assign(r, {
+          status: fresh.status,
+          totalTests: fresh.totalTests,
+          completedTests: fresh.completedTests,
+          successfulTests: fresh.successfulTests,
+          failedTests: fresh.failedTests,
+          error: fresh.error,
+          startedAt: fresh.startedAt,
+          completedAt: fresh.completedAt
+        });
+      } catch (_e) {
+        r.status = 'completed';
+      }
       Store.set('currentTestRun', r);
       this._updateUI(r);
       this._stopPolling();
@@ -244,7 +264,7 @@ const DashboardPage = {
     const actions = document.getElementById('dashActions');
     if (title) title.textContent = run.name || 'Test Run';
 
-    const badges = { running: 'badge-info', paused: 'badge-warning', completed: 'badge-success', cancelled: 'badge-danger', pending: 'badge-neutral' };
+    const badges = { running: 'badge-info', paused: 'badge-warning', completed: 'badge-success', cancelled: 'badge-danger', failed: 'badge-danger', pending: 'badge-neutral' };
     if (status) status.innerHTML = `<span class="badge ${badges[run.status] || 'badge-neutral'}">${run.status}</span>`;
 
     const el = (id) => document.getElementById(id);
@@ -304,10 +324,11 @@ const DashboardPage = {
         r.failedTests = fresh.failedTests;
         r.totalTests = fresh.totalTests;
         r.status = fresh.status;
+        r.error = fresh.error;
         Store.set('currentTestRun', r);
         this._updateUI(r);
         this._loadResults(runId);
-        if (fresh.status === 'completed' || fresh.status === 'cancelled') {
+        if (this._isFinished(fresh.status)) {
           this._stopPolling();
           DashboardPreviewGrid.clear();
           DashboardBwChart.destroy();
@@ -425,8 +446,17 @@ const DashboardPage = {
     try {
       this._destroyPieChart();
       const results = await Api.getTestRunResults(run.id);
+
+      const failureBanner = (run.status === 'failed' && run.error)
+        ? `<div class="alert alert-danger mb-24">
+             <i data-lucide="alert-triangle"></i>
+             <div><strong>Run failed:</strong> ${Utils.escapeHtml(run.error)}</div>
+           </div>`
+        : '';
+
       if (!results || results.length === 0) {
-        completedSection.innerHTML = '<div class="empty-state"><p>No results recorded.</p></div>';
+        completedSection.innerHTML = `${failureBanner}<div class="empty-state"><p>No results recorded.</p></div>`;
+        if (typeof lucide !== 'undefined') lucide.createIcons();
         return;
       }
 
@@ -456,6 +486,7 @@ const DashboardPage = {
         : null;
 
       let html = `
+        ${failureBanner}
         <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 16px;">
           <div class="section-title" style="margin-bottom: 0;"><i data-lucide="bar-chart-3"></i> Summary</div>
           <button class="btn btn-primary btn-sm ml-auto" id="completedRerunBtn"><i data-lucide="repeat"></i> Rerun</button>

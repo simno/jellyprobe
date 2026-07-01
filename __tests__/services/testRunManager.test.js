@@ -199,5 +199,84 @@ describe('TestRunManager', () => {
         2  // failed (was 1, now 2)
       );
     });
+
+    test('should not finalize while media is still being queued', () => {
+      // Scheduled runs start with totalTests=0; completions arriving while
+      // batches are still queueing must not mark the run completed.
+      mockDb.getTestRun.mockReturnValue({
+        id: 1,
+        status: 'running',
+        totalTests: 0,
+        completedTests: 0,
+        successfulTests: 0,
+        failedTests: 0
+      });
+      testRunManager._queueingRuns.add(1);
+
+      const completedEvents = [];
+      testRunManager.on('testRunCompleted', (d) => completedEvents.push(d));
+
+      testRunManager.onTestComplete({ success: true });
+
+      expect(completedEvents).toHaveLength(0);
+      expect(mockDb.updateTestRun).not.toHaveBeenCalledWith(1,
+        expect.objectContaining({ status: 'completed' }));
+    });
+
+    test('should not finalize when totalTests is still 0 after queueing', () => {
+      mockDb.getTestRun.mockReturnValue({
+        id: 1,
+        status: 'running',
+        totalTests: 0,
+        completedTests: 0,
+        successfulTests: 0,
+        failedTests: 0
+      });
+
+      const completedEvents = [];
+      testRunManager.on('testRunCompleted', (d) => completedEvents.push(d));
+
+      testRunManager.onTestComplete({ success: true });
+
+      expect(completedEvents).toHaveLength(0);
+    });
+  });
+
+  describe('_maybeCompleteRun', () => {
+    test('finalizes a running run whose tests all completed during queueing', () => {
+      mockDb.getTestRun.mockReturnValue({
+        id: 1,
+        status: 'running',
+        totalTests: 3,
+        completedTests: 3
+      });
+      testRunManager.currentRunId = 1;
+
+      const completedEvents = [];
+      testRunManager.on('testRunCompleted', (d) => completedEvents.push(d));
+
+      testRunManager._maybeCompleteRun(1);
+
+      expect(completedEvents).toEqual([{ id: 1 }]);
+      expect(mockDb.updateTestRun).toHaveBeenCalledWith(1,
+        expect.objectContaining({ status: 'completed' }));
+      expect(testRunManager.currentRunId).toBeNull();
+    });
+
+    test('does nothing for runs that are not running', () => {
+      mockDb.getTestRun.mockReturnValue({
+        id: 1,
+        status: 'cancelled',
+        totalTests: 3,
+        completedTests: 3
+      });
+
+      const completedEvents = [];
+      testRunManager.on('testRunCompleted', (d) => completedEvents.push(d));
+
+      testRunManager._maybeCompleteRun(1);
+
+      expect(completedEvents).toHaveLength(0);
+    });
   });
 });

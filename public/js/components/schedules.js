@@ -21,7 +21,7 @@ const SchedulesPage = {
         container.innerHTML = `
           <div class="empty-state">
             <i data-lucide="calendar-off"></i>
-            <p>No scheduled runs yet.<br><a href="#/" class="text-accent">Create one from the wizard →</a></p>
+            <p>No scheduled runs yet.<br><a href="#/new" class="text-accent">Create one from the wizard →</a></p>
           </div>`;
         if (typeof lucide !== 'undefined') lucide.createIcons();
         return;

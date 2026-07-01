@@ -72,8 +72,6 @@ class Scheduler extends EventEmitter {
         days: schedule.mediaDays || 7
       };
 
-      this.testRunManager.testRunner.setMaxParallelTests(schedule.parallelTests || 2);
-
       const config = {
         devices,
         mediaScope,
@@ -87,7 +85,9 @@ class Scheduler extends EventEmitter {
       const runName = `${schedule.name} — ${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
       const testRun = this.testRunManager.createTestRun(config, runName);
       log.info(`[Scheduler] Created test run ${testRun.id} for schedule ${schedule.name}`);
-      await this.testRunManager.startTestRun(testRun.id);
+      // Pass the schedule's parallelism explicitly — startTestRun would
+      // otherwise override it with the global config value.
+      await this.testRunManager.startTestRun(testRun.id, { maxParallelTests: schedule.parallelTests || 2 });
       this.emit('scheduledRunStarted', { scheduleId: schedule.id, testRunId: testRun.id });
     } catch (err) {
       log.error(`[Scheduler] Failed to execute schedule ${schedule.id}:`, err.message);
@@ -108,10 +108,12 @@ class Scheduler extends EventEmitter {
       let daysUntil = ((dayOfWeek ?? 0) - currentDay + 7) % 7;
       if (daysUntil === 0 && candidate <= now) daysUntil = 7;
       candidate.setDate(candidate.getDate() + daysUntil);
-    } else if (frequency === 'every12h') {
-      if (candidate <= now) candidate.setTime(candidate.getTime() + 12 * 60 * 60 * 1000);
-    } else if (frequency === 'every6h') {
-      if (candidate <= now) candidate.setTime(candidate.getTime() + 6 * 60 * 60 * 1000);
+    } else if (frequency === 'every12h' || frequency === 'every6h') {
+      // Keep adding intervals until we land in the future — a single hop can
+      // still be in the past (e.g. every6h anchored at 01:00 when it's 20:00),
+      // which would make the schedule fire on every tick.
+      const intervalMs = (frequency === 'every12h' ? 12 : 6) * 60 * 60 * 1000;
+      while (candidate <= now) candidate.setTime(candidate.getTime() + intervalMs);
     }
 
     return candidate.toISOString();
