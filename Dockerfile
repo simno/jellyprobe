@@ -1,3 +1,15 @@
+# Build stage: better-sqlite3 ships no prebuilt binaries, so its native addon is
+# compiled from source here and the toolchain is left out of the runtime image.
+FROM node:26-alpine AS deps
+
+RUN apk add --no-cache python3 make g++
+
+WORKDIR /app
+
+COPY package*.json ./
+
+RUN npm ci --omit=dev
+
 FROM node:26-alpine
 
 # Install sqlite, su-exec for dropping privileges, and tzdata for timezone support
@@ -6,8 +18,7 @@ RUN apk add --no-cache sqlite su-exec tzdata
 WORKDIR /app
 
 COPY package*.json ./
-
-RUN npm ci --only=production
+COPY --from=deps /app/node_modules ./node_modules
 
 COPY src ./src
 COPY public ./public
